@@ -5,6 +5,4 @@ target/
 
 *.har
 
-Cargo.lock
-
 config.rs

@@ -13,6 +13,7 @@ use napi_ohos::threadsafe_function::ThreadsafeFunction;
 use napi_ohos::tokio::sync::Mutex;
 use napi_ohos::{tokio, Error};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::thread::sleep;
 use tokio_util::sync::CancellationToken;
 
@@ -171,7 +172,7 @@ pub async fn sync_caches_from_local_db(
 pub async fn send_message(chat_id: i64, text: String, medias: Option<Vec<String>>, update_upload_progress_callback: UpdateUploadProgressCallback) -> Result<Vec<NativeMessage>> {
     let backend = tg::Backend::get_instance().await;
     let messages = backend
-        .send_message(chat_id, text, medias, update_upload_progress_callback)
+        .send_message(chat_id, text, medias, Arc::new(update_upload_progress_callback))
         .await
         .map_err(|e| Error::from_reason(e.to_string()))?;
     Ok(messages)

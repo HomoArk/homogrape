@@ -9,6 +9,7 @@ use log::{debug, error};
 use napi_ohos::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_ohos::tokio;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use grammers_client::types::Message;
 
 impl Backend {
@@ -120,7 +121,7 @@ impl Backend {
     }
 
     pub async fn send_message(&self, chat_id: i64, text: String, medias: Option<Vec<String>>,
-                              update_upload_progress_callback: UpdateUploadProgressCallback) -> Result<Vec<NativeMessage>> {
+                              update_upload_progress_callback: Arc<UpdateUploadProgressCallback>) -> Result<Vec<NativeMessage>> {
         debug!("Sending message to chat {}: {}", chat_id, text);
         // let chats_map = self.chats_map.read().await;
         let packed_chat = self.seen_packed_chats_map.get(&chat_id).unwrap_or_else(|| {
@@ -142,7 +143,7 @@ impl Backend {
                 let _handler = tokio::spawn(async move {
                     while stream_leaked.position() < (len - 1) as u64 {
                         let progress = (stream_leaked.position() as f64 / len as f64) * 100f64;
-                        callback_ref.call(Ok((index, progress as i64)), ThreadsafeFunctionCallMode::NonBlocking);
+                        callback_ref.call(Ok((index as i64, progress as i64)), ThreadsafeFunctionCallMode::NonBlocking);
                         // sleep for short time to avoid high CPU usage
                     }
                 });

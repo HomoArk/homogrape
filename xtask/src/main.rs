@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::{env, path::PathBuf};
+use std::path::Path;
 
 fn main() {
     if let Err(e) = try_main() {
@@ -33,8 +34,11 @@ dist            invoke `ohrs build` and copy generated files to the given direct
 }
 
 fn dist(dest: String) -> Result<()> {
+    let dest = Path::new(&dest);
+    if !dest.exists() {
+        std::fs::create_dir_all(dest)?;
+    }
     let dest = dunce::canonicalize(PathBuf::from(dest))?;
-
     let root = project_root();
 
     let _ = std::process::Command::new("ohrs")

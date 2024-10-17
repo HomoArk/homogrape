@@ -16,7 +16,7 @@ pub type UpdateChatCallback = ThreadsafeFunction<(
 pub type IncomingMessageCallback = ThreadsafeFunction<(Option<NativeChat>, NativeMessage)>;
 
 // (media_index, current_progress): void => {} 
-pub type UpdateUploadProgressCallback = ThreadsafeFunction<(usize, i64), Promise<()>>;
+pub type UpdateUploadProgressCallback = ThreadsafeFunction<(i64, i64), Promise<()>>;
 #[derive(Debug, PartialEq)]
 #[napi]
 pub enum LoginState {

@@ -1,5 +1,5 @@
 [package]
-name = "homoapp-native"
+name = "homogrape"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,19 +9,19 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-napi-ohos = { version = "1.0.0-beta.8", features = ["async", "tokio_full"] }
-napi-derive-ohos = { version = "1.0.0-beta.8" }
+napi-ohos = { version = "1.0.0", features = ["async", "tokio_full"] }
+napi-derive-ohos = { version = "1.0.0" }
 encoding_rs = "0.8.34"
 log = "0.4.22"
-grammers-crypto = { path = "../../../../../../grammers/lib/grammers-crypto" }
-grammers-client = { path = "../../../../../../grammers/lib/grammers-client" }
-grammers-session = { path = "../../../../../../grammers/lib/grammers-session" }
-grammers-mtproto = { path = "../../../../../../grammers/lib/grammers-mtproto" }
-grammers-mtsender = { path = "../../../../../../grammers/lib/grammers-mtsender" }
-grammers-tl-types = { path = "../../../../../../grammers/lib/grammers-tl-types" }
+grammers-crypto = { git = "https://github.com/HomoArk/grammers.git" }
+grammers-client = { git = "https://github.com/HomoArk/grammers.git"  }
+grammers-session = { git = "https://github.com/HomoArk/grammers.git"  }
+grammers-mtproto = { git = "https://github.com/HomoArk/grammers.git"  }
+grammers-mtsender = { git = "https://github.com/HomoArk/grammers.git"  }
+grammers-tl-types = { git = "https://github.com/HomoArk/grammers.git"  }
 simple_logger = { version = "5.0.0", default-features = false, features = ["colors"] }
 ohos-hilog-binding = "0.0.3"
-hilog = { path = "../../../../../../hilog" }
+hilog = { git = "https://github.com/HomoArk/hilog.git" }
 env_logger = "0.11.5"
 anyhow = "1.0.87"
 chrono = { version = "0.4.38", features = ["serde"] }
@@ -38,23 +38,23 @@ stdext = "0.3.3"
 memmap2 = "0.9.5"
 dashmap = "6.1.0"
 
-[patch.crates-io]
-grammers-crypto = { path = "../../../../../../grammers/lib/grammers-crypto" }
-grammers-client = { path = "../../../../../../grammers/lib/grammers-client" }
-grammers-session = { path = "../../../../../../grammers/lib/grammers-session" }
-grammers-mtproto = { path = "../../../../../../grammers/lib/grammers-mtproto" }
-grammers-mtsender = { path = "../../../../../../grammers/lib/grammers-mtsender" }
-grammers-tl-types = { path = "../../../../../../grammers/lib/grammers-tl-types" }
+[patch."https://github.com/HomoArk/grammers.git"]
+grammers-crypto = { path = "../../../../../../../grammers/lib/grammers-crypto" }
+grammers-client = { path = "../../../../../../../grammers/lib/grammers-client" }
+grammers-session = { path = "../../../../../../../grammers/lib/grammers-session" }
+grammers-mtproto = { path = "../../../../../../../grammers/lib/grammers-mtproto" }
+grammers-mtsender = { path = "../../../../../../../grammers/lib/grammers-mtsender" }
+grammers-tl-types = { path = "../../../../../../../grammers/lib/grammers-tl-types" }
+
+[patch."https://github.com/HomoArk/hilog.git"]
+hilog = { path = "../../../../../../../hilog" }
 
 [build-dependencies]
-napi-build-ohos = { version = "1.0.0-beta.8" }
-regex = "1.10.6"
+napi-build-ohos = { version = "1.0.0" }
 
 [profile.release]
 lto = true
 strip = true
 
 [workspace]
-members = [
-    "xtask"
-]
+members = ["xtask"]
