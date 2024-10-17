@@ -167,16 +167,6 @@ pub async fn sync_caches_from_local_db(
     Ok(())
 }
 
-// #[napi]
-// pub async fn get_chat(id: i64, chat_type: ChatType) -> Result<NativeChat> {
-//     let backend = tg::Backend::get_instance().await;
-//     let chat = backend
-//         .get_chat(id)
-//         .await
-//         .map_err(|e| Error::from_reason(e.to_string()))?;
-//     Ok(NativeChat::from_raw(&chat).await)
-// }
-
 #[napi]
 pub async fn send_message(chat_id: i64, text: String, medias: Option<Vec<String>>, update_upload_progress_callback: UpdateUploadProgressCallback) -> Result<Vec<NativeMessage>> {
     let backend = tg::Backend::get_instance().await;

@@ -8,6 +8,7 @@ mod reconnect;
 mod utils;
 mod config;
 
+use crate::tg::config::MAX_CONCURRENT_REQUESTS;
 use crate::tg::reconnect::HomoReconnectPolicy;
 use crate::tg::types::*;
 use anyhow::Result;
@@ -152,7 +153,7 @@ impl Backend {
             profile_photo_downloading_set: HashSet::default(),
             seen_packed_chats_map: HashMap::default(),
             save_session_mutex: Mutex::new(()),
-            global_semaphore: Semaphore::new(10),
+            global_semaphore: Semaphore::new(MAX_CONCURRENT_REQUESTS),
         })
     }
 
@@ -245,14 +246,12 @@ impl Backend {
 
     #[inline]
     fn insert_chat_to(&mut self, chat: &NativeChat) {
-        self.chats_map.insert(chat.chat_id, chat.clone())
-            .expect(format!("chats_map insert {} failed", chat.chat_id).as_str());
+        self.chats_map.insert(chat.chat_id, chat.clone());
     }
 
     #[inline]
     fn insert_seen_packed_chat(&mut self, seen_packed_chat: &PackedChat) {
-        self.seen_packed_chats_map.insert(seen_packed_chat.id, seen_packed_chat.clone())
-            .expect(format!("seen_packed_chats_map insert {} failed", seen_packed_chat.id).as_str());
+        self.seen_packed_chats_map.insert(seen_packed_chat.id, *seen_packed_chat);
     }
 }
 

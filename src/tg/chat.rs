@@ -43,7 +43,7 @@ impl Backend {
         let mut dialog_iter = self.client.iter_dialogs();
         while let Some(dialog) = dialog_iter.next().await? {
             tokio::spawn(self.save_session());
-            let dialog = Box::leak(Box::new(dialog));
+            // let dialog = Box::leak(Box::new(dialog));
             let raw_chat = dialog.chat();
             let mut chat = NativeChat::from_raw(raw_chat).await;
             debug!("Loading chat:{}, chat_type: {:?}, forum: {}", chat.name, chat.chat_type, chat.forum);
@@ -57,7 +57,7 @@ impl Backend {
             // }
             chat.pinned = dialog.raw.pinned();
             let last_message_id = if let Some(last_message_ids) = last_message_ids.as_ref() {
-                last_message_ids.get(&chat.chat_id).and_then(|id| Some(*id))
+                last_message_ids.get(&chat.chat_id).map(|id| *id)
             } else {
                 None
             };
@@ -84,15 +84,13 @@ impl Backend {
             chat.last_message_sender_name = last_message.sender_name.clone();
             chat.last_message_text = last_message.text.clone();
             chat.last_message_timestamp = last_message.timestamp;
-            self.seen_packed_chats_map.insert(packed_chat.id, packed_chat)
-                .expect(format!("seen_packed_chats_map insert {} failed", packed_chat.id).as_str());
+            self.seen_packed_chats_map.insert(packed_chat.id, packed_chat);
             let native_seen_chat = NativeSeenChat::from_raw(raw_chat);
             self.cache_seen_chat_callback
                 .as_ref()
                 .unwrap()
                 .call(Ok(native_seen_chat.clone()), ThreadsafeFunctionCallMode::NonBlocking);
-            self.chats_map.insert(raw_chat.id(), chat.clone())
-                .expect(format!("chats_map insert {} failed", raw_chat.id()).as_str());
+            self.chats_map.insert(raw_chat.id(), chat.clone());
             self.update_chat_callback.as_ref().unwrap().call(
                 Ok((
                     native_seen_chat,
@@ -164,7 +162,7 @@ impl Backend {
             debug!("Downloading profile photo for sender: {}, id: {}", sender.name(), sender.id());
             let profile_photo_path = get_profile_photo_path_and_count(sender.id())?;
             if profile_photo_path.current.is_none() {
-                self.download_chat_photo(&sender.pack(), true, &profile_photo_path).await
+                self.download_chat_photo(&sender, true, &profile_photo_path).await
             } else {
                 Ok(())
             }
@@ -184,13 +182,8 @@ impl Backend {
         false
     }
 
-    pub(crate) async fn download_chat_photo(&self, chat: &PackedChat, big: bool,
+    pub(crate) async fn download_chat_photo(&self, chat: &Chat, big: bool,
                                             profile_photo_path: &ProfilePhotoPath) -> Result<()> {
-        // TODO: invoke this in high frequency may cause FLOOD_WAIT
-        // here, besides using the semaphore to limit the maximum number of concurrent downloads,
-        // we also need to consider limiting the frequency of unpack_chat()
-        let _permit = self.global_semaphore.acquire().await?;
-        let chat = self.client.unpack_chat(*chat).await?;
         let ret: Result<()>;
 
         if self.check_chat_photo_downloading_and_wait(chat.id()).await {
@@ -200,7 +193,15 @@ impl Backend {
             let profile_photo = chat.photo_downloadable(big);
             if let Some(profile_photo) = profile_photo {
                 self.profile_photo_downloading_set.insert(chat.id());
-                self.client.download_media(&profile_photo, &profile_photo_path.next).await?;
+
+                {
+                    // TODO: invoke this in high frequency may cause FLOOD_WAIT
+                    // here, besides using the semaphore to limit the maximum number of concurrent downloads,
+                    // we also need to consider limiting the frequency
+                    let _permit = self.global_semaphore.acquire().await?;
+                    self.client.download_media(&profile_photo, &profile_photo_path.next).await?;
+                }
+
                 self.profile_photo_downloading_set.remove(&chat.id());
                 debug!("Downloaded profile photo for chat {} at {}", chat.name(), profile_photo_path.next);
                 ret = Ok(());
@@ -209,7 +210,6 @@ impl Backend {
             }
         }
 
-        drop(_permit);
         ret
     }
 
@@ -225,7 +225,16 @@ impl Backend {
             error!("Chat with id {} not found in known_packed_chats_map!", chat_id);
             return Err(anyhow::anyhow!("Chat with id {} not found in known_packed_chats_map!", chat_id));
         }
-        self.download_chat_photo(&chat.unwrap(), big, &profile_photo_path).await?;
+
+        let chat = {
+            // TODO: invoke this in high frequency may cause FLOOD_WAIT
+            // here, besides using the semaphore to limit the maximum number of concurrent downloads,
+            // we also need to consider limiting the frequency
+            let _permit = self.global_semaphore.acquire().await?;
+            self.client.unpack_chat(*chat.unwrap()).await?
+        };
+
+        self.download_chat_photo(&chat, big, &profile_photo_path).await?;
         Ok(profile_photo_path.next)
     }
 

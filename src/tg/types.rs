@@ -195,18 +195,21 @@ pub struct NativeChat {
 
 impl NativeChat {
     pub async fn from_raw(raw: &grammers_client::types::Chat) -> Self {
-        let megagroup: bool = match raw {
-            Chat::User(_) => { false }
-            Chat::Group(g) => { g.is_megagroup() }
-            Chat::Channel(_) => { false }
-        };
-        let forum = if megagroup {
-            if let Chat::Group(g) = raw {
-                if let tl::enums::Chat::Channel(c) = &g.raw {
-                    c.forum
-                } else { false }
-            } else { false }
-        } else { false };
+        // let megagroup: bool = match raw {
+        //     Chat::User(_) => { false }
+        //     Chat::Group(g) => { g.is_megagroup() }
+        //     Chat::Channel(_) => { false }
+        // };
+        // let forum = if megagroup {
+        //     if let Chat::Group(g) = raw {
+        //         if let tl::enums::Chat::Channel(c) = &g.raw {
+        //             c.forum
+        //         } else { false }
+        //     } else { false }
+        // } else { false };
+        let megagroup = matches!(raw, Chat::Group(g) if g.is_megagroup());
+        let forum = megagroup && matches!(raw, Chat::Group(g)
+            if matches!(&g.raw, tl::enums::Chat::Channel(c) if c.forum)); // TODO: check this
         Self {
             chat_id: raw.id(),
             chat_type: ChatType::from_chat(raw),
