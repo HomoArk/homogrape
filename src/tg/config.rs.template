@@ -1,3 +1,4 @@
 pub const TELEGRAM_API_ID: &str = "00000000";
 pub const TELEGRAM_API_HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 pub const SIGN_OUT_RETRIES: u8 = 3;
+pub const MAX_CONCURRENT_REQUESTS: usize = 10;
