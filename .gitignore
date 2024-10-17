@@ -1,4 +1,5 @@
 dist/arm64-v8a
+dist/index.d.ts
 target/
 .DS_Store
 .idea/
