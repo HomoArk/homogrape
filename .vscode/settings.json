@@ -1,0 +1,8 @@
+{
+    "rust-analyzer.cargo.target": "aarch64-unknown-linux-ohos",
+    "rust-analyzer.procMacro.ignored": {
+        "napi_derive_ohos" : [
+            "napi"
+        ]
+    }
+}
