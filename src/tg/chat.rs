@@ -91,6 +91,7 @@ impl Backend {
                 .unwrap()
                 .call(Ok(native_seen_chat.clone()), ThreadsafeFunctionCallMode::NonBlocking);
             self.chats_map.insert(raw_chat.id(), chat.clone());
+            debug!("before update_chat_callback call: chat name: {}", chat.name);
             self.update_chat_callback.as_ref().unwrap().call(
                 Ok((
                     native_seen_chat,
@@ -100,6 +101,7 @@ impl Backend {
                 ThreadsafeFunctionCallMode::NonBlocking,
             );
         }
+        debug!("load_chats_with_offset done!");
         Ok(())
     }
 
@@ -189,7 +191,7 @@ impl Backend {
         if self.check_chat_photo_downloading_and_wait(chat.id()).await {
             ret = Ok(());
         } else {
-            debug!("Downloading profile photo for chat {}", chat.name());
+            debug!("download_chat_photo Downloading profile photo for chat {}", chat.name());
             let profile_photo = chat.photo_downloadable(big);
             if let Some(profile_photo) = profile_photo {
                 self.profile_photo_downloading_set.insert(chat.id());
@@ -198,15 +200,18 @@ impl Backend {
                     // TODO: invoke this in high frequency may cause FLOOD_WAIT
                     // here, besides using the semaphore to limit the maximum number of concurrent downloads,
                     // we also need to consider limiting the frequency
-                    let _permit = self.global_semaphore.acquire().await?;
+                    // debug!("download_chat_photo acquiring global_semaphore");
+                    // let _permit = self.global_semaphore.acquire().await?;
+                    // debug!("download_chat_photo acquired global_semaphore");
+                    debug!("download_chat_photo Downloading profile photo for chat {} at {:?}", chat.name(), profile_photo_path.current);
                     self.client.download_media(&profile_photo, &profile_photo_path.next).await?;
                 }
 
                 self.profile_photo_downloading_set.remove(&chat.id());
-                debug!("Downloaded profile photo for chat {} at {}", chat.name(), profile_photo_path.next);
+                debug!("download_chat_photo Downloaded profile photo for chat {} at {}", chat.name(), profile_photo_path.next);
                 ret = Ok(());
             } else {
-                ret = Err(anyhow::anyhow!("No profile photo found for chat {}", chat.name()));
+                ret = Err(anyhow::anyhow!("download_chat_photo No profile photo found for chat {}", chat.name()));
             }
         }
 
@@ -214,27 +219,34 @@ impl Backend {
     }
 
     pub async fn download_chat_photo_by_chat_id(&mut self, chat_id: i64, big: bool) -> Result<String> {
-        debug!("Downloading chat photo for chat {}", chat_id);
+        debug!("download_chat_photo_by_chat_id Downloading chat photo for chat {}", chat_id);
         let profile_photo_path = get_profile_photo_path_and_count(chat_id)?;
-        debug!("profile_photo_path: {:?}", profile_photo_path);
+        debug!("download_chat_photo_by_chat_id profile_photo_path: {:?}", profile_photo_path);
         if self.check_chat_photo_downloading_and_wait(chat_id).await {
+            debug!("download_chat_photo_by_chat_id Chat photo for chat {} is already downloaded!", chat_id);
             return Ok(profile_photo_path.next);
         }
+        debug!("download_chat_photo_by_chat_id Chat photo for chat {} is not downloaded yet, getting its packed_chat!", chat_id);
         let chat = self.seen_packed_chats_map.get(&chat_id);
+        debug!("download_chat_photo_by_chat_id packed_chat got: {:?}", chat);
         if chat.is_none() {
-            error!("Chat with id {} not found in known_packed_chats_map!", chat_id);
-            return Err(anyhow::anyhow!("Chat with id {} not found in known_packed_chats_map!", chat_id));
+            error!("download_chat_photo_by_chat_id Chat with id {} not found in known_packed_chats_map!", chat_id);
+            return Err(anyhow::anyhow!("download_chat_photo_by_chat_id Chat with id {} not found in known_packed_chats_map!", chat_id));
         }
 
         let chat = {
             // TODO: invoke this in high frequency may cause FLOOD_WAIT
             // here, besides using the semaphore to limit the maximum number of concurrent downloads,
             // we also need to consider limiting the frequency
-            let _permit = self.global_semaphore.acquire().await?;
+            // debug!("download_chat_photo_by_chat_id acquiring global_semaphore");
+            // let _permit = self.global_semaphore.acquire().await?;
+            // debug!("download_chat_photo_by_chat_id acquired global_semaphore");
+            debug!("download_chat_photo_by_chat_id unpacking chat for chat {}", chat_id);
             self.client.unpack_chat(*chat.unwrap()).await?
         };
-
+        debug!("download_chat_photo_by_chat_id unpacked chat got: {:?}", chat);
         self.download_chat_photo(&chat, big, &profile_photo_path).await?;
+        debug!("download_chat_photo_by_chat_id Chat photo for chat {} downloaded at {}", chat_id, profile_photo_path.next);
         Ok(profile_photo_path.next)
     }
 
