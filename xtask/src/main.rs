@@ -1,6 +1,6 @@
 use anyhow::Result;
-use std::{env, path::PathBuf};
 use std::path::Path;
+use std::{env, path::PathBuf};
 
 fn main() {
     if let Err(e) = try_main() {
@@ -41,11 +41,27 @@ fn dist(dest: String) -> Result<()> {
     let dest = dunce::canonicalize(PathBuf::from(dest))?;
     let root = project_root();
 
-    let _ = std::process::Command::new("ohrs")
+    let ohrs = {
+        let dir = "../../../../../../../ohos-rs/target/release";
+        #[cfg(target_os = "windows")]
+        {
+            format!("{}/ohrs.exe", dir)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            format!("{}/ohrs", dir)
+        }
+    };
+
+    let _ = std::process::Command::new(ohrs)
         .current_dir(&root)
         .arg("build")
         .arg("--arch=aarch")
+        // .arg("--asan")
+        // .arg("--tsan")
         // .arg("--arch=x86_64")
+        // .env("CARGO_RUSTFLAGS", "--cfg\x1ftokio_unstable")
+        // .env("TOKIO_CONSOLE_BIND", "0.0.0.0:30000")
         .status()
         .expect("failed to build the project");
 
@@ -54,8 +70,7 @@ fn dist(dest: String) -> Result<()> {
     let src = dunce::canonicalize(&root.join("dist/arm64-v8a"))?;
     let files = std::fs::read_dir(&src)?;
     for file in files {
-        let file = file?;
-        let path = file.path();
+        let path = file?.path();
         if !path.is_file() {
             continue;
         }

@@ -26,8 +26,9 @@ use grammers_session::PackedChat;
 use grammers_tl_types::enums::messages::Messages;
 use grammers_tl_types::enums::InputPeer;
 use grammers_tl_types::{Deserializable, Serializable};
-use hilog::{Builder, LogDomain};
-use log::{debug, error, info, LevelFilter};
+use hilog::{hilog_writer::MakeHiLogWriter, Builder, LogDomain};
+use libc::c_char;
+use log::LevelFilter;
 use napi_derive_ohos::napi;
 use napi_ohos::bindgen_prelude::Promise;
 use napi_ohos::bindgen_prelude::*;
@@ -37,12 +38,17 @@ use napi_ohos::threadsafe_function::{
 use napi_ohos::tokio;
 use napi_ohos::tokio::runtime;
 use napi_ohos::tokio::sync::{mpsc, Mutex, MutexGuard, OnceCell, RwLock, Semaphore};
-use ohos_hilog_binding::{debug, info};
+use ohos_hilog_binding::{debug, info, LogLevel, LogType};
 use std::collections::{BTreeMap, VecDeque};
+use std::ffi::CStr;
 use std::ops::ControlFlow;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 const BASE_PATH: &str = "/data/storage/el2/base/";
 const SESSION_FILE: &str = concatcp!(BASE_PATH, "session");
@@ -96,22 +102,36 @@ impl Backend {
     }
 
     async fn new() -> Result<Self> {
-        let mut builder = Builder::new();
-        // use stdext::function_name;
-        builder
-            .set_domain(LogDomain::new(0x0000))
-            .filter_level(LevelFilter::Trace)
-            // .filter_module("homoapp_native", LevelFilter::Trace)
-            .format(|buf, record| {
-                writeln!(
-                    buf,
-                    "{}:{} - {}",
-                    record.file().unwrap_or("unknown"),
-                    record.line().unwrap_or(0),
-                    record.args()
-                )
-            });
-        builder.init();
+        let filter = EnvFilter::try_new("trace")?;
+        let ohrs_writer_layer = tracing_ohos::layer(0x0000, "homogrape")?;
+
+        tracing_subscriber::registry()
+            .with(ohrs_writer_layer)
+            .with(filter)
+            .init();
+
+        // tracing_subscriber::fmt()
+        //     .with_writer(MakeHiLogWriter)
+        //     .with_env_filter(filter)
+        //     .with_ansi(false)
+        //     .init();
+
+        // let mut builder = Builder::new();
+        // // use stdext::function_name;
+        // builder
+        //     .set_domain(LogDomain::new(0x0000))
+        //     .filter_level(LevelFilter::Trace)
+        //     // .filter_module("homoapp_native", LevelFilter::Trace)
+        //     .format(|buf, record| {
+        //         writeln!(
+        //             buf,
+        //             "{}:{} - {}",
+        //             record.file().unwrap_or("unknown"),
+        //             record.line().unwrap_or(0),
+        //             record.args()
+        //         )
+        //     });
+        // builder.init();
 
         info!("Constructing Telegram backend...");
 

@@ -172,9 +172,18 @@ impl Backend {
             let message_sent = self
                 .client
                 .send_message(packed_chat, InputMessage::text(text.clone()))
-                .await?;
-            debug!("Message sent: {:?}", message_sent);
-            Ok(vec![NativeMessage::from_raw(&message_sent)])
+                .await;
+            debug!("send_message returned: {:?}", message_sent);
+            match message_sent {
+                Err(e) => {
+                    error!("Failed to send message: {e}");
+                    Err(anyhow::Error::from(e))
+                }
+                Ok(message_sent) => {
+                    debug!("Message sent: {:?}", message_sent);
+                    Ok(vec![NativeMessage::from_raw(&message_sent)])
+                }
+            }
         }
     }
 
@@ -190,11 +199,27 @@ impl Backend {
             error!("Chat with id {} not found in chats_map!", chat_id);
             panic!("Chat with id {} not found in chats_map!", chat_id)
         }).clone();
-        let mut message = self.client.get_messages_by_id(packed_chat, &[message_id]).await?;
+        let message = self.client.get_messages_by_id(packed_chat, &[message_id]).await;
+        let mut message = match message {
+            Ok(message) => message,
+            Err(e) => {
+                error!("Failed to get message: {e}");
+                return Err(anyhow::Error::from(e));
+            }
+        };
+
         if message.is_empty() {
             return Err(anyhow::anyhow!("Message not found!"));
         }
-        let message = message.pop().unwrap().unwrap(); // panic if message is not found
+        let message = match message.pop() {
+            Some(message) => message.unwrap_or_else(|| {
+                error!("Message not found!");
+                panic!("Message not found!");
+            }),
+            None => {
+                return Err(anyhow::anyhow!("Message not found!"));
+            }
+        };
 
         let download_dir = get_download_dir(chat_id);
         let download_path = get_media_path(chat_id, message_id);
@@ -202,7 +227,7 @@ impl Backend {
         // check if the file exists
         if std::path::Path::new(&download_path).exists() {
             debug!("Media already downloaded!");
-            return Ok(download_path);
+            Ok(download_path)
         } else {
             if !std::path::Path::new(&download_dir).exists() {
                 std::fs::create_dir_all(download_dir)?;
