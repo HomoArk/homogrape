@@ -6,22 +6,22 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "deadlock"
+path = "src/main.rs"
 
 [dependencies]
-napi-ohos = { git = "https://github.com/HomoArk/ohos-rs.git", features = ["async", "tokio_full", "tokio_tracing"] }
-napi-derive-ohos = { git = "https://github.com/HomoArk/ohos-rs.git", version = "1.0.0" }
 encoding_rs = "0.8.34"
 log = "0.4.22"
-grammers-crypto = { git = "https://github.com/HomoArk/grammers.git" }
-grammers-client = { git = "https://github.com/HomoArk/grammers.git" }
-grammers-session = { git = "https://github.com/HomoArk/grammers.git" }
-grammers-mtproto = { git = "https://github.com/HomoArk/grammers.git" }
-grammers-mtsender = { git = "https://github.com/HomoArk/grammers.git" }
-grammers-tl-types = { git = "https://github.com/HomoArk/grammers.git" }
+grammers-crypto = { git = "https://github.com/Lonami/grammers.git" }
+grammers-client = { git = "https://github.com/Lonami/grammers.git" }
+grammers-session = { git = "https://github.com/Lonami/grammers.git" }
+grammers-mtproto = { git = "https://github.com/Lonami/grammers.git" }
+grammers-mtsender = { git = "https://github.com/Lonami/grammers.git" }
+grammers-tl-types = { git = "https://github.com/Lonami/grammers.git" }
 simple_logger = { version = "5.0.0", default-features = false, features = ["colors"] }
-ohos-hilog-binding = "0.0.3"
-hilog = { git = "https://github.com/HomoArk/hilog.git" }
 env_logger = "0.11.5"
 anyhow = "1.0.87"
 chrono = { version = "0.4.38", features = ["serde"] }
@@ -39,41 +39,9 @@ memmap2 = "0.9.5"
 dashmap = "6.1.0"
 console-subscriber = "0.4.0"
 libc = "0.2.161"
-#tracing = { git = "https://github.com/HomoArk/tracing.git" }
-#tracing-subscriber = { git = "https://github.com/HomoArk/tracing.git" }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["tracing-log"] }
-tracing-ohos = { path = "../../../../../../../tracing-ohos" }
-
-[build-dependencies]
-napi-build-ohos = { git = "https://github.com/HomoArk/ohos-rs.git", version = "1.0.0" }
-
-[patch."https://github.com/HomoArk/grammers.git"]
-grammers-crypto = { path = "../../../../../../../grammers/lib/grammers-crypto" }
-grammers-client = { path = "../../../../../../../grammers/lib/grammers-client" }
-grammers-session = { path = "../../../../../../../grammers/lib/grammers-session" }
-grammers-mtproto = { path = "../../../../../../../grammers/lib/grammers-mtproto" }
-grammers-mtsender = { path = "../../../../../../../grammers/lib/grammers-mtsender" }
-grammers-tl-types = { path = "../../../../../../../grammers/lib/grammers-tl-types" }
-
-[patch."https://github.com/HomoArk/hilog.git"]
-hilog = { path = "../../../../../../../hilog" }
-
-[patch."https://github.com/HomoArk/ohos-rs.git"]
-napi-ohos = { path = "../../../../../../../ohos-rs/crates/napi" }
-napi-derive-ohos = { path = "../../../../../../../ohos-rs/crates/macro" }
-napi-build-ohos = { path = "../../../../../../../ohos-rs/crates/build" }
-
-#[patch."https://github.com/HomoArk/tokio.git"]
-#tokio = { path = "../../../../../../../tokio/tokio" }
-#tokio-util = { path = "../../../../../../../tokio/tokio-util" }
-#tokio-macros = { path = "../../../../../../../tokio/tokio-macros" }
-#tokio-stream = { path = "../../../../../../../tokio/tokio-stream" }
-#tokio-test = { path = "../../../../../../../tokio/tokio-test" }
-
-#[patch."https://github.com/HomoArk/tracing.git"]
-#tracing = { path = "../../../../../../../tracing/tracing" }
-#tracing-subscriber = { path = "../../../../../../../tracing/tracing-subscriber" }
+tokio = { version = "1.14.0", features = ["full", "tracing"] }
 
 [profile.release]
 lto = true

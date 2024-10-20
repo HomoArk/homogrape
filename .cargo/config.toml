@@ -4,3 +4,6 @@ xtask = "run --package xtask --"
 [target.aarch64-unknown-linux-ohos]
 ar = "$OHOS_NDK_HOME/native/llvm/bin/llvm-ar"
 linker = "scripts/aarch64-unknown-linux-ohos-clang.bat"
+
+[build]
+rustflags = ["--cfg", "tokio_unstable"]

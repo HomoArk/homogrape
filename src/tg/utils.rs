@@ -1,9 +1,6 @@
 use crate::tg::BASE_PATH;
+use anyhow::Result;
 use const_format::concatcp;
-use napi_derive_ohos::napi;
-use napi_ohos::Error;
-
-type Result<T> = std::result::Result<T, Error>;
 
 const MEDIAS_DIR: &str = concatcp!(BASE_PATH, "downloads/");
 
@@ -16,7 +13,7 @@ pub fn get_media_path(chat_id: i64, message_id: i32) -> String {
 }
 
 #[derive(Debug)]
-#[napi]
+
 pub struct ProfilePhotoPath {
     pub dir: String,
     pub current: Option<String>,
@@ -31,7 +28,7 @@ pub struct ProfilePhotoPath {
 /// * `chat_id` - the id of the chat.
 /// * `current` - if true, return the path of the current profile photo,
 /// otherwise return the path of the next profile photo.
-#[napi]
+
 pub fn get_profile_photo_path_and_count(chat_id: i64) -> Result<ProfilePhotoPath> {
     let dir = format!("{}/{}/{}", MEDIAS_DIR, chat_id, "profile_photos/");
     std::fs::create_dir_all(&dir)?;

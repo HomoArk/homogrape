@@ -1,24 +1,10 @@
 use grammers_client::grammers_tl_types as tl;
 use grammers_client::types::Chat;
-use napi_derive_ohos::napi;
-use napi_ohos::bindgen_prelude::{Buffer, Promise};
-use napi_ohos::threadsafe_function::ThreadsafeFunction;
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
-pub type LoadChatsCallback = ThreadsafeFunction<(), Promise<()>>;
-pub type CacheSeenChatCallback = ThreadsafeFunction<NativeSeenChat, Promise<()>>;
-pub type UpdateChatCallback = ThreadsafeFunction<(
-    NativeSeenChat,
-    NativeChat,
-    Vec<NativeMessage>,
-), Promise<()>>;
-pub type IncomingMessageCallback = ThreadsafeFunction<(Option<NativeChat>, NativeMessage)>;
-
-// (media_index, current_progress): void => {} 
-pub type UpdateUploadProgressCallback = ThreadsafeFunction<(i64, i64), Promise<()>>;
 #[derive(Debug, PartialEq)]
-#[napi]
+
 pub enum LoginState {
     WrongPhoneNumber,
     CodeRequired,
@@ -30,7 +16,7 @@ pub enum LoginState {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[napi]
+
 pub enum MediaType {
     None,
     Photo,
@@ -66,22 +52,14 @@ impl From<Option<grammers_client::types::Media>> for MediaType {
 }
 
 #[derive(Clone)]
-#[napi(object)]
+
 pub struct NativePackedChat {
     pub chat_id: i64,
     pub packed_chat: String,
 }
 
-#[derive(Clone)]
-#[napi(object)]
-pub struct NativeRawMessage {
-    pub chat_id: i64,
-    pub message_id: i32,
-    pub raw_message: Buffer,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[napi(object)]
+
 pub struct NativeMessage {
     pub message_id: i32,
     pub chat_id: i64,
@@ -156,7 +134,7 @@ impl Ord for NativeMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[napi]
+
 pub enum ChatType {
     User,
     Group,
@@ -178,7 +156,7 @@ impl ChatType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[napi(object)]
+
 pub struct NativeChat {
     pub chat_id: i64,
     pub chat_type: ChatType,
@@ -264,7 +242,7 @@ impl NativeChat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[napi(object)]
+
 pub struct NativeSeenChat {
     pub chat_id: i64,
     pub chat_type: ChatType,
@@ -282,7 +260,7 @@ pub struct NativeSeenChat {
     pub forum: bool,
 }
 
-#[napi]
+
 impl NativeSeenChat {
     pub fn from_raw(raw: &grammers_client::types::Chat) -> Self {
         match raw {

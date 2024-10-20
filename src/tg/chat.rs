@@ -1,4 +1,4 @@
-use crate::tg::types::{ChatType, NativeChat, NativePackedChat, NativeRawMessage, NativeSeenChat};
+use crate::tg::types::{ChatType, NativeChat, NativePackedChat, NativeSeenChat};
 use crate::tg::utils::{get_profile_photo_path_and_count, ProfilePhotoPath};
 use crate::tg::Backend;
 use anyhow::Result;
@@ -8,10 +8,7 @@ use grammers_client::{grammers_tl_types as tl, InitParams};
 use grammers_session::PackedChat;
 use grammers_tl_types::Serializable;
 use log::{debug, error};
-use napi_ohos::bindgen_prelude::Buffer;
-use napi_ohos::threadsafe_function::ThreadsafeFunctionCallMode;
-use napi_ohos::tokio;
-use ohos_hilog_binding::debug;
+use tokio;
 impl Backend {
     // pub async fn load_profile_photos(&mut self) -> Result<()> {
     //     let mut dialog_iter = self.client.iter_dialogs();
@@ -85,24 +82,14 @@ impl Backend {
             chat.last_message_text = last_message.text.clone();
             chat.last_message_timestamp = last_message.timestamp;
             self.seen_packed_chats_map.insert(packed_chat.id, packed_chat);
-            let native_seen_chat = NativeSeenChat::from_raw(raw_chat);
-            self.cache_seen_chat_callback
-                .as_ref()
-                .unwrap()
-                .call(Ok(native_seen_chat.clone()), ThreadsafeFunctionCallMode::NonBlocking);
             self.chats_map.insert(raw_chat.id(), chat.clone());
-            debug!("before update_chat_callback call: chat name: {}", chat.name);
-            self.update_chat_callback.as_ref().unwrap().call(
-                Ok((
-                    native_seen_chat,
-                    chat,
-                    sorted_messages.values().cloned().collect(),
-                )),
-                ThreadsafeFunctionCallMode::NonBlocking,
-            );
         }
         debug!("load_chats_with_offset done!");
         Ok(())
+    }
+
+    pub async fn get_chats_map(&'static self) -> &HashMap<i64, NativeChat> {
+        &self.chats_map
     }
 
     /// Sync cached chats from local database. This method normally should be called

@@ -7,3 +7,7 @@ target/
 *.har
 
 config.rs
+
+session
+*.log
+/data

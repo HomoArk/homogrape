@@ -5,10 +5,8 @@ use anyhow::Result;
 use grammers_client::Update;
 use grammers_session::Session;
 use log::{debug, info};
-use napi_ohos::threadsafe_function::ThreadsafeFunctionCallMode;
-use napi_ohos::tokio;
-use ohos_hilog_binding::debug;
 use std::collections::BTreeMap;
+use tokio;
 
 impl Backend {
     pub async fn run(&'static self) -> Result<()> {

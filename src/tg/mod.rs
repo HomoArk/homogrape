@@ -17,7 +17,7 @@ use const_format::{concatcp, formatcp};
 use dashmap::{DashMap as HashMap, DashSet as HashSet};
 use grammers_client::client::messages::MessageIter;
 use grammers_client::session::Session;
-use grammers_client::types::{Dialog, LoginToken, PasswordToken, User};
+use grammers_client::types::{Dialog, LoginToken, Message, PasswordToken, User};
 use grammers_client::{grammers_tl_types as tl, InitParams};
 use grammers_client::{Client, Config, SignInError, Update};
 use grammers_crypto::two_factor_auth::check_p_and_g;
@@ -26,32 +26,24 @@ use grammers_session::PackedChat;
 use grammers_tl_types::enums::messages::Messages;
 use grammers_tl_types::enums::InputPeer;
 use grammers_tl_types::{Deserializable, Serializable};
-use hilog::{hilog_writer::MakeHiLogWriter, Builder, LogDomain};
 use libc::c_char;
 use log::LevelFilter;
-use napi_derive_ohos::napi;
-use napi_ohos::bindgen_prelude::Promise;
-use napi_ohos::bindgen_prelude::*;
-use napi_ohos::threadsafe_function::{
-    ThreadsafeFunction, ThreadsafeFunctionCallMode, UnknownReturnValue,
-};
-use napi_ohos::tokio;
-use napi_ohos::tokio::runtime;
-use napi_ohos::tokio::sync::{mpsc, Mutex, MutexGuard, OnceCell, RwLock, Semaphore};
-use ohos_hilog_binding::{debug, info, LogLevel, LogType};
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::CStr;
 use std::ops::ControlFlow;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+use tokio;
+use tokio::runtime;
+use tokio::sync::{mpsc, Mutex, MutexGuard, OnceCell, RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
-const BASE_PATH: &str = "/data/storage/el2/base/";
-const SESSION_FILE: &str = concatcp!(BASE_PATH, "session");
+const BASE_PATH: &str = "./data/";
+const SESSION_FILE: &str = "./session";
 
 
 type ChatsMap = HashMap<i64, NativeChat>;
@@ -64,10 +56,7 @@ pub struct Backend {
     password_token: Option<PasswordToken>,
     seen_packed_chats_map: HashMap<i64, PackedChat>,
     chats_map: HashMap<i64, NativeChat>,
-    cache_seen_chat_callback: Option<CacheSeenChatCallback>,
-    load_chats_callback: Option<LoadChatsCallback>,
-    update_chat_callback: Option<UpdateChatCallback>,
-    incoming_message_callback: Option<IncomingMessageCallback>,
+    messages_map: HashMap<i64, HashMap<i32, Message>>,
     run_handler: Option<tokio::task::JoinHandle<Result<()>>>,
     profile_photo_downloading_set: HashSet<i64>,
     save_session_mutex: Mutex<()>,
@@ -102,14 +91,6 @@ impl Backend {
     }
 
     async fn new() -> Result<Self> {
-        let filter = EnvFilter::try_new("trace")?;
-        let ohrs_writer_layer = tracing_ohos::layer(0x0000, "homogrape")?;
-
-        tracing_subscriber::registry()
-            .with(ohrs_writer_layer)
-            .with(filter)
-            .init();
-
         // tracing_subscriber::fmt()
         //     .with_writer(MakeHiLogWriter)
         //     .with_env_filter(filter)
@@ -162,13 +143,10 @@ impl Backend {
             client,
             user: None,
             chats_map: HashMap::default(),
+            messages_map: HashMap::default(),
             login_token: None,
             login_state: None,
             password_token: None,
-            cache_seen_chat_callback: None,
-            load_chats_callback: None,
-            update_chat_callback: None,
-            incoming_message_callback: None,
             run_handler: None,
             profile_photo_downloading_set: HashSet::default(),
             seen_packed_chats_map: HashMap::default(),
@@ -225,23 +203,6 @@ impl Backend {
             }
         }
     }
-
-    pub(crate) fn register_load_chats_callback(&mut self, cb: LoadChatsCallback) {
-        self.load_chats_callback.replace(cb);
-    }
-
-    pub(crate) fn register_cache_seen_chat_callback(&mut self, cb: CacheSeenChatCallback) {
-        self.cache_seen_chat_callback.replace(cb);
-    }
-
-    pub(crate) fn register_update_chat_callback(&mut self, cb: UpdateChatCallback) {
-        self.update_chat_callback.replace(cb);
-    }
-
-    pub(crate) fn register_incoming_message_callback(&mut self, cb: IncomingMessageCallback) {
-        self.incoming_message_callback.replace(cb);
-    }
-
 
     #[inline]
     pub async fn is_logged_in(&self) -> bool {
