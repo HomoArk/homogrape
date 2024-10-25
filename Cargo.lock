@@ -1021,8 +1021,6 @@ dependencies = [
  "env_filter",
  "hilog-sys",
  "log",
- "tracing-core",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2186,6 +2184,7 @@ dependencies = [
 [[package]]
 name = "tracing-ohos"
 version = "0.1.0"
+source = "git+https://github.com/HomoArk/tracing-ohos.git#f50d7220a1b667fc83b1ae568fa4ebb3a2221d6c"
 dependencies = [
  "hilog-sys",
  "tracing",

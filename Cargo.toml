@@ -43,7 +43,7 @@ libc = "0.2.161"
 #tracing-subscriber = { git = "https://github.com/HomoArk/tracing.git" }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["tracing-log"] }
-tracing-ohos = { path = "../../../../../../../tracing-ohos" }
+tracing-ohos = { git = "https://github.com/HomoArk/tracing-ohos.git" }
 
 [build-dependencies]
 napi-build-ohos = { git = "https://github.com/HomoArk/ohos-rs.git", version = "1.0.0" }
