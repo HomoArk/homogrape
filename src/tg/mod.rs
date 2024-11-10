@@ -26,7 +26,7 @@ use grammers_session::PackedChat;
 use grammers_tl_types::enums::messages::Messages;
 use grammers_tl_types::enums::InputPeer;
 use grammers_tl_types::{Deserializable, Serializable};
-use hilog::{hilog_writer::MakeHiLogWriter, Builder, LogDomain};
+use hilog::{Builder, LogDomain};
 use libc::c_char;
 use log::LevelFilter;
 use napi_derive_ohos::napi;
