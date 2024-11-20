@@ -41,18 +41,18 @@ fn dist(dest: String) -> Result<()> {
     let dest = dunce::canonicalize(PathBuf::from(dest))?;
     let root = project_root();
 
-    let ohrs = {
-        let dir = "../../../../../../../ohos-rs/target/release";
-        #[cfg(target_os = "windows")]
-        {
-            format!("{}/ohrs.exe", dir)
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            format!("{}/ohrs", dir)
-        }
-    };
-
+    // let ohrs = {
+    //     let dir = "../../../../../../../ohos-rs/target/release";
+    //     #[cfg(target_os = "windows")]
+    //     {
+    //         format!("{}/ohrs.exe", dir)
+    //     }
+    //     #[cfg(not(target_os = "windows"))]
+    //     {
+    //         format!("{}/ohrs", dir)
+    //     }
+    // };
+    let ohrs = "ohrs";
     let _ = std::process::Command::new(ohrs)
         .current_dir(&root)
         .arg("build")
