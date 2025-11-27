@@ -1,8 +1,11 @@
-use crate::tg::types::{MediaType, NativeChat, NativeMessage, NativeSeenChat, UpdateUploadProgressCallback};
+use crate::tg::types::{
+    MediaType, NativeChat, NativeMessage, NativeSeenChat, UpdateUploadProgressCallback,
+};
 use crate::tg::utils::{get_download_dir, get_media_path, get_profile_photo_path_and_count};
 use crate::tg::Backend;
 use anyhow::Result;
 use grammers_client::client::messages::MessageIter;
+use grammers_client::types::Message;
 use grammers_client::{grammers_tl_types as tl, InputMedia};
 use grammers_tl_types::enums::InputMessage;
 use log::{debug, error};
@@ -10,22 +13,23 @@ use napi_ohos::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_ohos::tokio;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use grammers_client::types::Message;
 
 impl Backend {
     pub(crate) async fn incoming_message_handler(&'static self, raw_message: &Message) {
-        self.seen_packed_chats_map.insert(raw_message.chat().id(), raw_message.chat().pack());
-        self.cache_seen_chat_callback
-            .as_ref()
-            .unwrap()
-            .call(Ok(NativeSeenChat::from_raw(&raw_message.chat())), ThreadsafeFunctionCallMode::NonBlocking);
+        self.seen_packed_chats_map
+            .insert(raw_message.chat().id(), raw_message.chat().pack());
+        self.cache_seen_chat_callback.as_ref().unwrap().call(
+            Ok(NativeSeenChat::from_raw(&raw_message.chat())),
+            ThreadsafeFunctionCallMode::NonBlocking,
+        );
 
         if let Some(sender) = raw_message.sender() {
-            self.seen_packed_chats_map.insert(sender.id(), sender.pack());
-            self.cache_seen_chat_callback
-                .as_ref()
-                .unwrap()
-                .call(Ok(NativeSeenChat::from_raw(&sender)), ThreadsafeFunctionCallMode::NonBlocking);
+            self.seen_packed_chats_map
+                .insert(sender.id(), sender.pack());
+            self.cache_seen_chat_callback.as_ref().unwrap().call(
+                Ok(NativeSeenChat::from_raw(&sender)),
+                ThreadsafeFunctionCallMode::NonBlocking,
+            );
         }
 
         tokio::spawn(self.download_sender_chat_photo(raw_message.sender()));
@@ -35,7 +39,10 @@ impl Backend {
                 debug!("tg::Backend::run() New message in chat {}", old_chat.name);
                 let message = NativeMessage::from_raw(&raw_message);
                 debug!("tg::Backend::run() message: {:?}", message);
-                old_chat.last_message_sender_name = raw_message.sender().map(|s| s.name().to_string()).unwrap_or("".to_string());
+                old_chat.last_message_sender_name = raw_message
+                    .sender()
+                    .map(|s| s.name().to_string())
+                    .unwrap_or("".to_string());
                 let raw_message = &raw_message.raw;
                 old_chat.last_message_id = raw_message.id;
                 old_chat.last_message_text = raw_message.message.clone();
@@ -52,10 +59,10 @@ impl Backend {
                 let raw_chat = raw_message.chat();
                 tokio::spawn(self.download_sender_chat_photo(raw_message.sender()));
                 debug!(
-                                "New message in unknown chat {}: {}",
-                                raw_chat.name(),
-                                raw_message.text()
-                            );
+                    "New message in unknown chat {}: {}",
+                    raw_chat.name(),
+                    raw_message.text()
+                );
                 // let chat = Chat::from_raw(raw_chat.clone()).await;
                 let message = NativeMessage::from_raw(&raw_message);
                 // let raw_message = raw_message.raw;
@@ -68,9 +75,13 @@ impl Backend {
                 debug!("Message: {:?}", message);
                 self.chats_map.insert(raw_chat.id(), chat.clone());
                 debug!("chats_map updated!");
-                self.incoming_message_callback.as_ref()
+                self.incoming_message_callback
+                    .as_ref()
                     .expect("incoming_message_callback is None")
-                    .call(Ok((Some(chat), message)), ThreadsafeFunctionCallMode::NonBlocking);
+                    .call(
+                        Ok((Some(chat), message)),
+                        ThreadsafeFunctionCallMode::NonBlocking,
+                    );
             }
         };
         debug!("Incoming message callback called!");
@@ -95,11 +106,12 @@ impl Backend {
             let sender = raw_message.sender();
             // tokio::spawn(self.download_sender_chat_photo(sender.clone()));
             if let Some(sender) = sender {
-                self.seen_packed_chats_map.insert(sender.id(), sender.pack());
-                self.cache_seen_chat_callback
-                    .as_ref()
-                    .unwrap()
-                    .call(Ok(NativeSeenChat::from_raw(&sender)), ThreadsafeFunctionCallMode::NonBlocking);
+                self.seen_packed_chats_map
+                    .insert(sender.id(), sender.pack());
+                self.cache_seen_chat_callback.as_ref().unwrap().call(
+                    Ok(NativeSeenChat::from_raw(&sender)),
+                    ThreadsafeFunctionCallMode::NonBlocking,
+                );
             }
             let message = NativeMessage::from_raw(&raw_message);
             sorted_messages.insert(message.message_id, message);
@@ -120,19 +132,33 @@ impl Backend {
         Ok(sorted_messages)
     }
 
-    pub async fn send_message(&self, chat_id: i64, text: String, medias: Option<Vec<String>>,
-                              update_upload_progress_callback: Arc<UpdateUploadProgressCallback>) -> Result<Vec<NativeMessage>> {
+    pub async fn send_message(
+        &self,
+        chat_id: i64,
+        text: String,
+        reply_to: Option<i32>,
+        medias: Option<Vec<String>>,
+        update_upload_progress_callback: Arc<UpdateUploadProgressCallback>,
+    ) -> Result<Vec<NativeMessage>> {
         debug!("Sending message to chat {}: {}", chat_id, text);
         // let chats_map = self.chats_map.read().await;
-        let packed_chat = self.seen_packed_chats_map.get(&chat_id).unwrap_or_else(|| {
-            error!("Chat with id {} not found in chats_map!", chat_id);
-            panic!("Chat with id {} not found in chats_map!", chat_id)
-        }).clone();
+        let packed_chat = self
+            .seen_packed_chats_map
+            .get(&chat_id)
+            .unwrap_or_else(|| {
+                error!("Chat with id {} not found in chats_map!", chat_id);
+                panic!("Chat with id {} not found in chats_map!", chat_id)
+            })
+            .clone();
         use grammers_client::InputMessage;
         let mut album = Vec::new();
 
         if let Some(medias) = medias {
-            debug!("Sending media message with {} messages and text {}", medias.len(), text);
+            debug!(
+                "Sending media message with {} messages and text {}",
+                medias.len(),
+                text
+            );
             for (index, media) in medias.iter().enumerate() {
                 let raw_file = std::fs::read(media)?;
                 let len = raw_file.len();
@@ -143,20 +169,34 @@ impl Backend {
                 let _handler = tokio::spawn(async move {
                     while stream_leaked.position() < (len - 1) as u64 {
                         let progress = (stream_leaked.position() as f64 / len as f64) * 100f64;
-                        callback_ref.call(Ok((index as i64, progress as i64)), ThreadsafeFunctionCallMode::NonBlocking);
+                        callback_ref.call(
+                            Ok((index as i64, progress as i64)),
+                            ThreadsafeFunctionCallMode::NonBlocking,
+                        );
                         // sleep for short time to avoid high CPU usage
                     }
                 });
-                let file_name = std::path::Path::new(media).file_name().unwrap().to_str().unwrap().split("/").last().unwrap();
-                let uploaded_file = self.client.upload_stream(&mut stream, len, file_name.to_string()).await;
+                let file_name = std::path::Path::new(media)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .split("/")
+                    .last()
+                    .unwrap();
+                let uploaded_file = self
+                    .client
+                    .upload_stream(&mut stream, len, file_name.to_string())
+                    .await;
                 match uploaded_file {
                     Ok(file) => {
                         let input_media = if index == 0 {
                             InputMedia::caption(text.clone())
                         } else {
                             InputMedia::caption("")
-                        }.photo(file);
-                        album.push(input_media);
+                        }
+                        .photo(file);
+                        album.push(input_media.reply_to(reply_to));
                     }
                     Err(e) => {
                         error!("Failed to upload media: {e}");
@@ -166,13 +206,14 @@ impl Backend {
             }
             let album_sent = self.client.send_album(packed_chat, album).await?;
             debug!("Album sent: {:?}", album_sent);
-            Ok(album_sent.iter().map(|m| NativeMessage::from_raw(m.as_ref().unwrap())).collect())
+            Ok(album_sent
+                .iter()
+                .map(|m| NativeMessage::from_raw(m.as_ref().unwrap()))
+                .collect())
         } else {
             debug!("Sending text message: {}", text);
-            let message_sent = self
-                .client
-                .send_message(packed_chat, InputMessage::text(text.clone()))
-                .await;
+            let msg = InputMessage::text(text).reply_to(reply_to);
+            let message_sent = self.client.send_message(packed_chat, msg).await;
             debug!("send_message returned: {:?}", message_sent);
             match message_sent {
                 Err(e) => {
@@ -195,11 +236,18 @@ impl Backend {
         debug!("Downloading media from message with id {}", message_id);
         // let messages_map_pair = self.messages_of_chats.read().await;
         // let messages_map_pair = messages_map_pair.get(&chat_id).unwrap();
-        let packed_chat = self.seen_packed_chats_map.get(&chat_id).unwrap_or_else(|| {
-            error!("Chat with id {} not found in chats_map!", chat_id);
-            panic!("Chat with id {} not found in chats_map!", chat_id)
-        }).clone();
-        let message = self.client.get_messages_by_id(packed_chat, &[message_id]).await;
+        let packed_chat = self
+            .seen_packed_chats_map
+            .get(&chat_id)
+            .unwrap_or_else(|| {
+                error!("Chat with id {} not found in chats_map!", chat_id);
+                panic!("Chat with id {} not found in chats_map!", chat_id)
+            })
+            .clone();
+        let message = self
+            .client
+            .get_messages_by_id(packed_chat, &[message_id])
+            .await;
         let mut message = match message {
             Ok(message) => message,
             Err(e) => {

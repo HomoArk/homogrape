@@ -2,7 +2,10 @@
 
 mod tg;
 
-use crate::tg::types::{CacheSeenChatCallback, ChatType, IncomingMessageCallback, LoadChatsCallback, NativePackedChat, NativeSeenChat, UpdateChatCallback, UpdateUploadProgressCallback};
+use crate::tg::types::{
+    CacheSeenChatCallback, ChatType, IncomingMessageCallback, LoadChatsCallback, NativePackedChat,
+    NativeSeenChat, UpdateChatCallback, UpdateUploadProgressCallback,
+};
 use crate::tg::types::{LoginState, NativeChat, NativeMessage};
 use grammers_session::PackedChat;
 use hilog::{Builder, LogDomain};
@@ -62,10 +65,7 @@ pub async fn password(password: String) -> Result<LoginState> {
 
 #[napi]
 pub async fn sign_out() -> bool {
-    tg::Backend::get_instance()
-        .await
-        .sign_out()
-        .await
+    tg::Backend::get_instance().await.sign_out().await
 }
 
 #[napi]
@@ -136,7 +136,10 @@ pub async fn load_chats() -> Result<()> {
 #[napi]
 pub async fn get_me() -> Result<NativeSeenChat> {
     let backend = tg::Backend::get_instance().await;
-    let me = backend.get_me().await.map_err(|e| Error::from_reason(e.to_string()))?;
+    let me = backend
+        .get_me()
+        .await
+        .map_err(|e| Error::from_reason(e.to_string()))?;
     Ok(me)
 }
 
@@ -169,10 +172,22 @@ pub async fn sync_caches_from_local_db(
 }
 
 #[napi]
-pub async fn send_message(chat_id: i64, text: String, medias: Option<Vec<String>>, update_upload_progress_callback: UpdateUploadProgressCallback) -> Result<Vec<NativeMessage>> {
+pub async fn send_message(
+    chat_id: i64,
+    text: String,
+    reply_to: Option<i32>,
+    medias: Option<Vec<String>>,
+    update_upload_progress_callback: UpdateUploadProgressCallback,
+) -> Result<Vec<NativeMessage>> {
     let backend = tg::Backend::get_instance().await;
     let messages = backend
-        .send_message(chat_id, text, medias, Arc::new(update_upload_progress_callback))
+        .send_message(
+            chat_id,
+            text,
+            reply_to,
+            medias,
+            Arc::new(update_upload_progress_callback),
+        )
         .await
         .map_err(|e| Error::from_reason(e.to_string()))?;
     Ok(messages)
@@ -201,7 +216,10 @@ pub async fn download_profile_photo(chat_id: i64) -> Result<String> {
 #[napi]
 pub async fn get_chat_photo_thumb(chat_id: i64) -> Result<Option<Buffer>> {
     let backend = tg::Backend::get_instance().await;
-    let thumb_vec = backend.get_chat_photo_thumb_by_chat_id(chat_id).await.map_err(|e| Error::from_reason(e.to_string()))?;
+    let thumb_vec = backend
+        .get_chat_photo_thumb_by_chat_id(chat_id)
+        .await
+        .map_err(|e| Error::from_reason(e.to_string()))?;
     Ok(thumb_vec.map(Buffer::from))
 }
 
