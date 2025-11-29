@@ -158,6 +158,20 @@ pub async fn load_chats_with_offset(last_message_ids: HashMap<String, i32>) -> R
 }
 
 #[napi]
+pub async fn load_history_messages(
+    chat_id: i64,
+    last_message_id: Option<i32>,
+    limit: Option<u32>,
+) -> Result<Vec<NativeMessage>> {
+    let backend = tg::Backend::get_instance().await;
+    let messages = backend
+        .load_history_messages(chat_id, last_message_id, limit)
+        .await
+        .map_err(|e| Error::from_reason(e.to_string()))?;
+    Ok(messages)
+}
+
+#[napi]
 pub async fn sync_caches_from_local_db(
     packed_chats: Vec<NativePackedChat>,
     // seen_chats: Vec<NativeSeenChat>,

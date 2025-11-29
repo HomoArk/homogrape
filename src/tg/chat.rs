@@ -36,6 +36,15 @@ impl Backend {
     //     };
     // }
 
+    /// `load_chats_with_offset`
+    /// 遍历所有对话，为每个聊天加载新消息（基于提供的偏移量），并通过回调通知外部代码更新缓存和 UI。
+    ///
+    /// ## 参数
+    /// - `last_message_ids`: 可选的 `HashMap<i64, i32>`，键为聊天 ID（`i64`），值为最后已知消息 ID（`i32`）。
+    ///   用于指定每个聊天的消息加载起点。如果为 `None`，则从最新消息开始加载。
+    ///
+    /// ## 返回值
+    /// 返回 `Result<(), anyhow::Error>`：成功时返回 `Ok(())`，失败时返回包含错误信息的 `Err`。
     pub async fn load_chats_with_offset(
         &'static mut self,
         last_message_ids: Option<HashMap<i64, i32>>,

@@ -96,6 +96,9 @@ impl Backend {
         let mut sorted_messages = BTreeMap::new();
         let mut message_iter = message_iter.limit(100);
         let now = chrono::Utc::now().timestamp();
+        if let Some(last_message_id) = last_message_id {
+            message_iter = message_iter.offset_id(last_message_id);
+        }
         message_iter = message_iter.max_date(now as i32); // TODO: What does this do?
         while let Some(raw_message) = message_iter.next().await? {
             if let Some(last_message_id) = last_message_id {
@@ -117,6 +120,55 @@ impl Backend {
             sorted_messages.insert(message.message_id, message);
         }
         Ok(sorted_messages)
+    }
+
+    pub(crate) async fn load_history_messages(
+        &self,
+        chat_id: i64,
+        before_message_id: Option<i32>,
+        limit: Option<u32>,
+    ) -> Result<Vec<NativeMessage>> {
+        let packed_chat = self
+            .seen_packed_chats_map
+            .get(&chat_id)
+            .ok_or_else(|| anyhow::anyhow!("Chat {} not found", chat_id))?
+            .clone();
+
+        let chat = self.client.unpack_chat(packed_chat).await?;
+
+        let mut messages = Vec::new();
+        let mut message_iter = self.client.iter_messages(&chat);
+        if let Some(limit) = limit {
+            message_iter = message_iter.limit(limit as usize);
+        }
+        if let Some(id) = before_message_id {
+            message_iter = message_iter.offset_id(id);
+        }
+
+        while let Some(raw_message) = message_iter.next().await? {
+            // 缓存发送者信息
+            if let Some(sender) = raw_message.sender() {
+                self.seen_packed_chats_map
+                    .insert(sender.id(), sender.pack());
+                if let Some(cb) = &self.cache_seen_chat_callback {
+                    cb.call(
+                        Ok(NativeSeenChat::from_raw(&sender)),
+                        ThreadsafeFunctionCallMode::NonBlocking,
+                    );
+                }
+            }
+            messages.push(NativeMessage::from_raw(&raw_message));
+        }
+
+        // 按消息 ID 升序排序（从旧到新）
+        messages.sort_by_key(|m| m.message_id);
+
+        debug!(
+            "Loaded {} history messages for chat {}",
+            messages.len(),
+            chat_id
+        );
+        Ok(messages)
     }
 
     pub(crate) async fn get_sorted_messages(
