@@ -65,6 +65,137 @@ impl From<Option<grammers_client::types::Media>> for MediaType {
     }
 }
 
+/// 消息格式化实体类型
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi]
+pub enum MessageEntityType {
+    Unknown,
+    Mention,        // @username
+    Hashtag,        // #hashtag
+    BotCommand,     // /command
+    Url,            // https://...
+    Email,          // email@example.com
+    Bold,           // **bold**
+    Italic,         // *italic*
+    Code,           // `code`
+    Pre,            // ```pre```
+    TextUrl,        // [text](url)
+    MentionName,    // 文本提及用户
+    Phone,          // 电话号码
+    Cashtag,        // $USD
+    Underline,      // 下划线
+    Strike,         // 删除线
+    Spoiler,        // 剧透文本
+    CustomEmoji,    // 自定义表情
+    Blockquote,     // 引用块
+}
+
+impl From<&tl::enums::MessageEntity> for MessageEntityType {
+    fn from(entity: &tl::enums::MessageEntity) -> Self {
+        use tl::enums::MessageEntity::*;
+        match entity {
+            Unknown(_) => MessageEntityType::Unknown,
+            Mention(_) => MessageEntityType::Mention,
+            Hashtag(_) => MessageEntityType::Hashtag,
+            BotCommand(_) => MessageEntityType::BotCommand,
+            Url(_) => MessageEntityType::Url,
+            Email(_) => MessageEntityType::Email,
+            Bold(_) => MessageEntityType::Bold,
+            Italic(_) => MessageEntityType::Italic,
+            Code(_) => MessageEntityType::Code,
+            Pre(_) => MessageEntityType::Pre,
+            TextUrl(_) => MessageEntityType::TextUrl,
+            MentionName(_) => MessageEntityType::MentionName,
+            Phone(_) => MessageEntityType::Phone,
+            Cashtag(_) => MessageEntityType::Cashtag,
+            Underline(_) => MessageEntityType::Underline,
+            Strike(_) => MessageEntityType::Strike,
+            Spoiler(_) => MessageEntityType::Spoiler,
+            CustomEmoji(_) => MessageEntityType::CustomEmoji,
+            Blockquote(_) => MessageEntityType::Blockquote,
+            _ => MessageEntityType::Unknown,
+        }
+    }
+}
+
+/// 消息格式化实体
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeMessageEntity {
+    pub entity_type: MessageEntityType,
+    pub offset: i32,      // UTF-16 偏移量
+    pub length: i32,      // UTF-16 长度
+    pub url: Option<String>,         // TextUrl 的链接
+    pub user_id: Option<i64>,        // MentionName 的用户 ID
+    pub language: Option<String>,    // Pre 的语言
+    pub custom_emoji_id: Option<i64>, // CustomEmoji 的 ID
+}
+
+impl NativeMessageEntity {
+    pub fn from_raw(entity: &tl::enums::MessageEntity) -> Self {
+        use tl::enums::MessageEntity::*;
+        
+        let (offset, length) = match entity {
+            Unknown(e) => (e.offset, e.length),
+            Mention(e) => (e.offset, e.length),
+            Hashtag(e) => (e.offset, e.length),
+            BotCommand(e) => (e.offset, e.length),
+            Url(e) => (e.offset, e.length),
+            Email(e) => (e.offset, e.length),
+            Bold(e) => (e.offset, e.length),
+            Italic(e) => (e.offset, e.length),
+            Code(e) => (e.offset, e.length),
+            Pre(e) => (e.offset, e.length),
+            TextUrl(e) => (e.offset, e.length),
+            MentionName(e) => (e.offset, e.length),
+            InputMessageEntityMentionName(e) => (e.offset, e.length),
+            Phone(e) => (e.offset, e.length),
+            Cashtag(e) => (e.offset, e.length),
+            Underline(e) => (e.offset, e.length),
+            Strike(e) => (e.offset, e.length),
+            Spoiler(e) => (e.offset, e.length),
+            CustomEmoji(e) => (e.offset, e.length),
+            Blockquote(e) => (e.offset, e.length),
+            BankCard(e) => (e.offset, e.length),
+            _ => (0, 0),
+        };
+        
+        let url = if let TextUrl(e) = entity {
+            Some(e.url.clone())
+        } else {
+            None
+        };
+        
+        let user_id = if let MentionName(e) = entity {
+            Some(e.user_id)
+        } else {
+            None
+        };
+        
+        let language = if let Pre(e) = entity {
+            Some(e.language.clone())
+        } else {
+            None
+        };
+        
+        let custom_emoji_id = if let CustomEmoji(e) = entity {
+            Some(e.document_id)
+        } else {
+            None
+        };
+        
+        Self {
+            entity_type: MessageEntityType::from(entity),
+            offset,
+            length,
+            url,
+            user_id,
+            language,
+            custom_emoji_id,
+        }
+    }
+}
+
 #[derive(Clone)]
 #[napi(object)]
 pub struct NativePackedChat {
@@ -98,6 +229,8 @@ pub struct NativeMessage {
     pub edit_timestamp: Option<i64>,
     pub grouped_id: Option<i64>,
     pub reply_to_message_id: Option<i32>,
+    /// 消息格式化实体（粗体、斜体、链接等）
+    pub fmt_entities: Option<Vec<NativeMessageEntity>>,
 }
 
 impl NativeMessage {
@@ -108,6 +241,12 @@ impl NativeMessage {
             sender_id = raw.sender().unwrap().id();
             sender_name = raw.sender().unwrap().name().to_string();
         }
+        
+        // 解析格式化实体
+        let fmt_entities = raw.fmt_entities().map(|entities| {
+            entities.iter().map(NativeMessageEntity::from_raw).collect()
+        });
+        
         Self {
             message_id: raw.id(),
             chat_id: raw.chat().id(),
@@ -124,6 +263,7 @@ impl NativeMessage {
             edit_timestamp: raw.edit_date().map(|d| d.timestamp()),
             grouped_id: raw.grouped_id(),
             reply_to_message_id: raw.reply_to_message_id(),
+            fmt_entities,
         }
     }
 }
