@@ -241,3 +241,13 @@ pub async fn get_chat_photo_thumb(chat_id: i64) -> Result<Option<Buffer>> {
 pub async fn reconnect() -> Result<bool> {
     Ok(tg::Backend::get_instance().await.reconnect().await)
 }
+
+#[napi]
+pub async fn get_participants(chat_id: i64) -> Result<Vec<tg::types::NativeParticipant>> {
+    let backend = tg::Backend::get_instance().await;
+    let participants = backend
+        .get_participants(chat_id)
+        .await
+        .map_err(|e| Error::from_reason(e.to_string()))?;
+    Ok(participants)
+}

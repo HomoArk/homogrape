@@ -494,3 +494,67 @@ impl NativeSeenChat {
         }
     }
 }
+
+/// 参与者角色类型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[napi]
+pub enum NativeParticipantRole {
+    /// 普通用户
+    User,
+    /// 群组/频道创建者
+    Creator,
+    /// 管理员
+    Admin,
+    /// 被封禁用户
+    Banned,
+    /// 已离开用户
+    Left,
+}
+
+impl From<&grammers_client::types::participant::Role> for NativeParticipantRole {
+    fn from(role: &grammers_client::types::participant::Role) -> Self {
+        use grammers_client::types::participant::Role;
+        match role {
+            Role::User(_) => NativeParticipantRole::User,
+            Role::Creator(_) => NativeParticipantRole::Creator,
+            Role::Admin(_) => NativeParticipantRole::Admin,
+            Role::Banned(_) => NativeParticipantRole::Banned,
+            Role::Left(_) => NativeParticipantRole::Left,
+            _ => NativeParticipantRole::User,
+        }
+    }
+}
+
+/// 聊天参与者
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeParticipant {
+    /// 用户 ID
+    pub user_id: i64,
+    /// 用户全名
+    pub full_name: String,
+    /// 用户名（可选）
+    pub first_name: String,
+    /// 用户名（可选）
+    pub last_name: Option<String>,
+    /// 用户名 @username（可选）
+    pub username: Option<String>,
+    /// 用户角色
+    pub role: NativeParticipantRole,
+    /// 头像缩略图
+    pub photo_thumb: Option<Vec<u8>>,
+}
+
+impl NativeParticipant {
+    pub fn from_raw(participant: &grammers_client::types::Participant) -> Self {
+        Self {
+            user_id: participant.user.id(),
+            full_name: participant.user.full_name().to_string(),
+            first_name: participant.user.first_name().to_string(),
+            last_name: participant.user.last_name().map(|s| s.to_string()),
+            username: participant.user.username().map(|s| s.to_string()),
+            role: NativeParticipantRole::from(&participant.role),
+            photo_thumb: participant.user.photo().and_then(|p| p.stripped_thumb.clone()),
+        }
+    }
+}

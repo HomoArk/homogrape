@@ -276,4 +276,30 @@ impl Backend {
             }
         }
     }
+
+    /// 获取聊天参与者列表
+    ///
+    /// ## 参数
+    /// - `chat_id`: 聊天 ID
+    ///
+    /// ## 返回值
+    /// 返回 `Result<Vec<NativeParticipant>, anyhow::Error>`：成功时返回参与者列表，失败时返回错误。
+    pub async fn get_participants(&self, chat_id: i64) -> Result<Vec<crate::tg::types::NativeParticipant>> {
+        let packed_chat = self.seen_packed_chats_map.get(&chat_id);
+        match packed_chat {
+            Some(packed_chat) => {
+                let chat = self.client.unpack_chat(*packed_chat).await?;
+                let mut participants = Vec::new();
+                let mut iter = self.client.iter_participants(&chat);
+                while let Some(participant) = iter.next().await? {
+                    participants.push(crate::tg::types::NativeParticipant::from_raw(&participant));
+                }
+                debug!("get_participants: chat_id={}, count={}", chat_id, participants.len());
+                Ok(participants)
+            }
+            None => {
+                Err(anyhow::anyhow!("Chat with id {} not found in seen_packed_chats_map!", chat_id))
+            }
+        }
+    }
 }
