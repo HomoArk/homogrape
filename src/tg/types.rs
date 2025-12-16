@@ -8,14 +8,11 @@ use std::hash::Hash;
 
 pub type LoadChatsCallback = ThreadsafeFunction<(), Promise<()>>;
 pub type CacheSeenChatCallback = ThreadsafeFunction<NativeSeenChat, Promise<()>>;
-pub type UpdateChatCallback = ThreadsafeFunction<(
-    NativeSeenChat,
-    NativeChat,
-    Vec<NativeMessage>,
-), Promise<()>>;
+pub type UpdateChatCallback =
+    ThreadsafeFunction<(NativeSeenChat, NativeChat, Vec<NativeMessage>), Promise<()>>;
 pub type IncomingMessageCallback = ThreadsafeFunction<(Option<NativeChat>, NativeMessage)>;
 
-// (media_index, current_progress): void => {} 
+// (media_index, current_progress): void => {}
 pub type UpdateUploadProgressCallback = ThreadsafeFunction<(i64, i64), Promise<()>>;
 #[derive(Debug, PartialEq)]
 #[napi]
@@ -60,7 +57,7 @@ impl From<Option<grammers_client::types::Media>> for MediaType {
             Some(Media::GeoLive(_)) => MediaType::GeoLive,
             Some(Media::WebPage(_)) => MediaType::WebPage,
             None => MediaType::None,
-            _ => { MediaType::None }
+            _ => MediaType::None,
         }
     }
 }
@@ -70,24 +67,44 @@ impl From<Option<grammers_client::types::Media>> for MediaType {
 #[napi]
 pub enum MessageEntityType {
     Unknown,
-    Mention,        // @username
-    Hashtag,        // #hashtag
-    BotCommand,     // /command
-    Url,            // https://...
-    Email,          // email@example.com
-    Bold,           // **bold**
-    Italic,         // *italic*
-    Code,           // `code`
-    Pre,            // ```pre```
-    TextUrl,        // [text](url)
-    MentionName,    // 文本提及用户
-    Phone,          // 电话号码
-    Cashtag,        // $USD
-    Underline,      // 下划线
-    Strike,         // 删除线
-    Spoiler,        // 剧透文本
-    CustomEmoji,    // 自定义表情
-    Blockquote,     // 引用块
+    Mention,     // @username
+    Hashtag,     // #hashtag
+    BotCommand,  // /command
+    Url,         // https://...
+    Email,       // email@example.com
+    Bold,        // **bold**
+    Italic,      // *italic*
+    Code,        // `code`
+    Pre,         // ```pre```
+    TextUrl,     // [text](url)
+    MentionName, // 文本提及用户
+    Phone,       // 电话号码
+    Cashtag,     // $USD
+    Underline,   // 下划线
+    Strike,      // 删除线
+    Spoiler,     // 剧透文本
+    CustomEmoji, // 自定义表情
+    Blockquote,  // 引用块
+}
+
+/// Sticker 信息
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct StickerInfo {
+    /// 关联的 emoji (来自 alt 字段)
+    pub emoji: Option<String>,
+    /// 是否为动画 sticker (TGS 格式)
+    pub is_animated: bool,
+    /// 是否为视频 sticker (WEBM 格式)
+    pub is_video: bool,
+    /// MIME 类型
+    pub mime_type: Option<String>,
+    /// 文件大小
+    pub file_size: Option<i64>,
+    /// 宽度
+    pub width: Option<i32>,
+    /// 高度
+    pub height: Option<i32>,
 }
 
 impl From<&tl::enums::MessageEntity> for MessageEntityType {
@@ -123,18 +140,18 @@ impl From<&tl::enums::MessageEntity> for MessageEntityType {
 #[napi(object)]
 pub struct NativeMessageEntity {
     pub entity_type: MessageEntityType,
-    pub offset: i32,      // UTF-16 偏移量
-    pub length: i32,      // UTF-16 长度
-    pub url: Option<String>,         // TextUrl 的链接
-    pub user_id: Option<i64>,        // MentionName 的用户 ID
-    pub language: Option<String>,    // Pre 的语言
+    pub offset: i32,                  // UTF-16 偏移量
+    pub length: i32,                  // UTF-16 长度
+    pub url: Option<String>,          // TextUrl 的链接
+    pub user_id: Option<i64>,         // MentionName 的用户 ID
+    pub language: Option<String>,     // Pre 的语言
     pub custom_emoji_id: Option<i64>, // CustomEmoji 的 ID
 }
 
 impl NativeMessageEntity {
     pub fn from_raw(entity: &tl::enums::MessageEntity) -> Self {
         use tl::enums::MessageEntity::*;
-        
+
         let (offset, length) = match entity {
             Unknown(e) => (e.offset, e.length),
             Mention(e) => (e.offset, e.length),
@@ -157,33 +174,32 @@ impl NativeMessageEntity {
             CustomEmoji(e) => (e.offset, e.length),
             Blockquote(e) => (e.offset, e.length),
             BankCard(e) => (e.offset, e.length),
-            _ => (0, 0),
         };
-        
+
         let url = if let TextUrl(e) = entity {
             Some(e.url.clone())
         } else {
             None
         };
-        
+
         let user_id = if let MentionName(e) = entity {
             Some(e.user_id)
         } else {
             None
         };
-        
+
         let language = if let Pre(e) = entity {
             Some(e.language.clone())
         } else {
             None
         };
-        
+
         let custom_emoji_id = if let CustomEmoji(e) = entity {
             Some(e.document_id)
         } else {
             None
         };
-        
+
         Self {
             entity_type: MessageEntityType::from(entity),
             offset,
@@ -231,6 +247,8 @@ pub struct NativeMessage {
     pub reply_to_message_id: Option<i32>,
     /// 消息格式化实体（粗体、斜体、链接等）
     pub fmt_entities: Option<Vec<NativeMessageEntity>>,
+    /// Sticker 信息
+    pub sticker_info: Option<StickerInfo>,
 }
 
 impl NativeMessage {
@@ -242,11 +260,57 @@ impl NativeMessage {
             sender_name = raw.sender().unwrap().name().to_string();
         }
         
-        // 解析格式化实体
-        let fmt_entities = raw.fmt_entities().map(|entities| {
-            entities.iter().map(NativeMessageEntity::from_raw).collect()
-        });
+        // 提取 Sticker 信息
+        let sticker_info =
+            if let Some(grammers_client::types::Media::Sticker(sticker)) = raw.media() {
+                let document = &sticker.document;
+                let mime = document.mime_type().unwrap_or("");
+
+                // 通过 MIME 类型判断 sticker 类型
+                // application/x-tgsticker 是动画 sticker (TGS/Lottie)
+                // video/webm 是视频 sticker
+                let is_animated = mime == "application/x-tgsticker";
+                let is_video = mime == "video/webm" || mime.starts_with("video/");
+
+                // 从 document.raw 中提取尺寸
+                // document.raw 已经是 MessageMediaDocument 类型
+                let (width, height) = if let Some(tl::enums::Document::Document(doc)) = &document.raw.document {
+                    // 查找 DocumentAttributeImageSize
+                    let mut w = None;
+                    let mut h = None;
+                    for attr in &doc.attributes {
+                        match attr {
+                            tl::enums::DocumentAttribute::ImageSize(size) => {
+                                w = Some(size.w);
+                                h = Some(size.h);
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    (w, h)
+                } else {
+                    (None, None)
+                };
+                
+                Some(StickerInfo {
+                    emoji: Some(sticker.raw_attrs.alt.clone()),
+                    is_animated,
+                    is_video,
+                    mime_type: Some(mime.to_string()),
+                    file_size: Some(document.size() as i64),
+                    width,
+                    height,
+                })
+            } else {
+                None
+            };
         
+        // 解析格式化实体
+        let fmt_entities: Option<Vec<NativeMessageEntity>> = raw
+            .fmt_entities()
+            .map(|entities| entities.iter().map(NativeMessageEntity::from_raw).collect());
+
         Self {
             message_id: raw.id(),
             chat_id: raw.chat().id(),
@@ -264,6 +328,7 @@ impl NativeMessage {
             grouped_id: raw.grouped_id(),
             reply_to_message_id: raw.reply_to_message_id(),
             fmt_entities,
+            sticker_info,
         }
     }
 }
@@ -354,7 +419,8 @@ impl NativeChat {
         //     } else { false }
         // } else { false };
         let megagroup = matches!(raw, Chat::Group(g) if g.is_megagroup());
-        let forum = megagroup && matches!(raw, Chat::Group(g)
+        let forum = megagroup
+            && matches!(raw, Chat::Group(g)
             if matches!(&g.raw, tl::enums::Chat::Channel(c) if c.forum)); // TODO: check this
         Self {
             chat_id: raw.id(),
@@ -377,20 +443,29 @@ impl NativeChat {
         let mut last_message_text = "".to_string();
         let mut last_message_timestamp = 0;
         let megagroup: bool = match chat {
-            Chat::User(_) => { false }
-            Chat::Group(g) => { g.is_megagroup() }
-            Chat::Channel(_) => { false }
+            Chat::User(_) => false,
+            Chat::Group(g) => g.is_megagroup(),
+            Chat::Channel(_) => false,
         };
         let forum = if megagroup {
             if let Chat::Group(g) = chat {
                 if let tl::enums::Chat::Channel(c) = &g.raw {
                     c.forum
-                } else { false }
-            } else { false }
-        } else { false };
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         if let Some(ref message) = dialog.last_message {
             last_message_id = message.id();
-            last_message_sender_name = message.sender().map(|s| s.name().to_string()).unwrap_or("".to_string());
+            last_message_sender_name = message
+                .sender()
+                .map(|s| s.name().to_string())
+                .unwrap_or("".to_string());
             last_message_text = message.text().to_string();
             last_message_timestamp = message.date().timestamp();
         }
@@ -450,7 +525,10 @@ impl NativeSeenChat {
             first_name: raw.first_name().to_string(),
             last_name: raw.last_name().map(|l| l.to_string()),
             bio: None,
-            photo_thumb: raw.photo().map(|p| p.stripped_thumb.clone()).unwrap_or(None),
+            photo_thumb: raw
+                .photo()
+                .map(|p| p.stripped_thumb.clone())
+                .unwrap_or(None),
             date_of_birth: None,
             forum: false,
         }
@@ -469,7 +547,10 @@ impl NativeSeenChat {
             first_name: raw.title().to_string(),
             last_name: None,
             bio: None,
-            photo_thumb: raw.photo().map(|p| p.stripped_thumb.clone()).unwrap_or(None),
+            photo_thumb: raw
+                .photo()
+                .map(|p| p.stripped_thumb.clone())
+                .unwrap_or(None),
             date_of_birth: None,
             forum: false,
         }
@@ -488,7 +569,10 @@ impl NativeSeenChat {
             first_name: raw.title().to_string(),
             last_name: None,
             bio: None,
-            photo_thumb: raw.photo().map(|p| p.stripped_thumb.clone()).unwrap_or(None),
+            photo_thumb: raw
+                .photo()
+                .map(|p| p.stripped_thumb.clone())
+                .unwrap_or(None),
             date_of_birth: None,
             forum: raw.raw.forum,
         }
@@ -554,7 +638,10 @@ impl NativeParticipant {
             last_name: participant.user.last_name().map(|s| s.to_string()),
             username: participant.user.username().map(|s| s.to_string()),
             role: NativeParticipantRole::from(&participant.role),
-            photo_thumb: participant.user.photo().and_then(|p| p.stripped_thumb.clone()),
+            photo_thumb: participant
+                .user
+                .photo()
+                .and_then(|p| p.stripped_thumb.clone()),
         }
     }
 }

@@ -15,6 +15,17 @@ pub fn get_media_path(chat_id: i64, message_id: i32) -> String {
     format!("{}/{}/{}.jpg", MEDIAS_DIR, chat_id, message_id)
 }
 
+pub fn get_sticker_path(chat_id: i64, message_id: i32, is_animated: bool, is_video: bool) -> String {
+    let extension = if is_video {
+        "webm"
+    } else if is_animated {
+        "tgs"
+    } else {
+        "webp"  // 静态 sticker 通常是 webp
+    };
+    format!("{}/{}/{}.{}", MEDIAS_DIR, chat_id, message_id, extension)
+}
+
 #[derive(Debug)]
 #[napi]
 pub struct ProfilePhotoPath {
