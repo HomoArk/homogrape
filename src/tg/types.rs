@@ -107,6 +107,24 @@ pub struct StickerInfo {
     pub height: Option<i32>,
 }
 
+/// 通用媒体信息（Photo、Document、Video 等）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct MediaInfo {
+    /// MIME 类型 (image/jpeg, video/mp4, application/pdf, etc.)
+    pub mime_type: Option<String>,
+    /// 原始文件名（如果有）
+    pub file_name: Option<String>,
+    /// 文件大小（字节）
+    pub file_size: Option<i64>,
+    /// 宽度（图片/视频）
+    pub width: Option<i32>,
+    /// 高度（图片/视频）
+    pub height: Option<i32>,
+    /// 时长（视频/音频，秒）
+    pub duration: Option<i32>,
+}
+
 impl From<&tl::enums::MessageEntity> for MessageEntityType {
     fn from(entity: &tl::enums::MessageEntity) -> Self {
         use tl::enums::MessageEntity::*;
@@ -249,6 +267,8 @@ pub struct NativeMessage {
     pub fmt_entities: Option<Vec<NativeMessageEntity>>,
     /// Sticker 信息
     pub sticker_info: Option<StickerInfo>,
+    /// 通用媒体信息（Photo/Document/Video 等）
+    pub media_info: Option<MediaInfo>,
 }
 
 impl NativeMessage {
@@ -310,6 +330,64 @@ impl NativeMessage {
         let fmt_entities: Option<Vec<NativeMessageEntity>> = raw
             .fmt_entities()
             .map(|entities| entities.iter().map(NativeMessageEntity::from_raw).collect());
+        
+        // 提取通用媒体信息
+        let media_info = match raw.media() {
+            Some(grammers_client::types::Media::Photo(_photo)) => {
+                // Photo 类型没有简单的方法获取文件大小，这里不设置
+                Some(MediaInfo {
+                    mime_type: Some("image/jpeg".to_string()),
+                    file_name: None,
+                    file_size: None,
+                    width: None,
+                    height: None,
+                    duration: None,
+                })
+            }
+            Some(grammers_client::types::Media::Document(doc)) => {
+                let mime = doc.mime_type().unwrap_or("application/octet-stream");
+                
+                // 从 attributes 中提取元数据
+                let (file_name, width, height, duration) = 
+                    if let Some(tl::enums::Document::Document(d)) = &doc.raw.document {
+                        let mut fname = None;
+                        let mut w = None;
+                        let mut h = None;
+                        let mut dur = None;
+                        
+                        for attr in &d.attributes {
+                            match attr {
+                                tl::enums::DocumentAttribute::Filename(f) => {
+                                    fname = Some(f.file_name.clone());
+                                }
+                                tl::enums::DocumentAttribute::ImageSize(size) => {
+                                    w = Some(size.w);
+                                    h = Some(size.h);
+                                }
+                                tl::enums::DocumentAttribute::Video(video) => {
+                                    w = Some(video.w);
+                                    h = Some(video.h);
+                                    dur = Some(video.duration as i32);
+                                }
+                                _ => {}
+                            }
+                        }
+                        (fname, w, h, dur)
+                    } else {
+                        (None, None, None, None)
+                    };
+                
+                Some(MediaInfo {
+                    mime_type: Some(mime.to_string()),
+                    file_name,
+                    file_size: Some(doc.size() as i64),
+                    width,
+                    height,
+                    duration,
+                })
+            }
+            _ => None,
+        };
 
         Self {
             message_id: raw.id(),
@@ -329,6 +407,7 @@ impl NativeMessage {
             reply_to_message_id: raw.reply_to_message_id(),
             fmt_entities,
             sticker_info,
+            media_info,
         }
     }
 }

@@ -1,7 +1,7 @@
 use crate::tg::types::{
     MediaType, NativeChat, NativeMessage, NativeSeenChat, UpdateUploadProgressCallback,
 };
-use crate::tg::utils::{get_download_dir, get_media_path, get_profile_photo_path_and_count};
+use crate::tg::utils::{get_download_dir, get_media_path_with_extension, get_profile_photo_path_and_count};
 use crate::tg::Backend;
 use anyhow::Result;
 use grammers_client::client::messages::MessageIter;
@@ -286,68 +286,82 @@ impl Backend {
         message_id: i32,
     ) -> Result<String> {
         debug!("Downloading media from message with id {}", message_id);
-        // let messages_map_pair = self.messages_of_chats.read().await;
-        // let messages_map_pair = messages_map_pair.get(&chat_id).unwrap();
+        
         let packed_chat = self
             .seen_packed_chats_map
             .get(&chat_id)
-            .unwrap_or_else(|| {
-                error!("Chat with id {} not found in chats_map!", chat_id);
-                panic!("Chat with id {} not found in chats_map!", chat_id)
-            })
+            .ok_or_else(|| anyhow::anyhow!("Chat {} not found in chats_map", chat_id))?
             .clone();
-        let message = self
+        
+        let mut messages = self
             .client
             .get_messages_by_id(packed_chat, &[message_id])
-            .await;
-        let mut message = match message {
-            Ok(message) => message,
-            Err(e) => {
-                error!("Failed to get message: {e}");
-                return Err(anyhow::Error::from(e));
-            }
-        };
-
-        if message.is_empty() {
-            return Err(anyhow::anyhow!("Message not found!"));
-        }
-        let message = match message.pop() {
-            Some(message) => message.unwrap_or_else(|| {
-                error!("Message not found!");
-                panic!("Message not found!");
-            }),
-            None => {
-                return Err(anyhow::anyhow!("Message not found!"));
-            }
-        };
+            .await?;
+        
+        let message = messages
+            .pop()
+            .and_then(|m| m)
+            .ok_or_else(|| anyhow::anyhow!("Message {} not found", message_id))?;
 
         let download_dir = get_download_dir(chat_id);
-        let download_path = get_media_path(chat_id, message_id);
-
-        // check if the file exists
-        if std::path::Path::new(&download_path).exists() {
-            debug!("Media already downloaded!");
-            Ok(download_path)
-        } else {
-            if !std::path::Path::new(&download_dir).exists() {
-                std::fs::create_dir_all(download_dir)?;
+        
+        // 从消息中提取 MIME 类型和文件名
+        let (mime_type, file_name) = match message.media() {
+            Some(grammers_client::types::Media::Document(doc)) => {
+                let mime = doc.mime_type().map(|s| s.to_string());
+                let fname = if let Some(tl::enums::Document::Document(d)) = &doc.raw.document {
+                    d.attributes.iter().find_map(|attr| {
+                        if let tl::enums::DocumentAttribute::Filename(f) = attr {
+                            Some(f.file_name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                };
+                (mime, fname)
             }
-            match message.download_media(download_path.clone()).await {
-                Ok(success) => {
-                    if success {
-                        debug!("Media downloaded successfully!");
-                        Ok(download_path)
-                    } else {
-                        error!("Failed to download media!");
-                        Err(anyhow::anyhow!(
-                            "Failed to download media: {success} returned!"
-                        ))
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to download media: {e}");
-                    Err(anyhow::Error::from(e))
-                }
+            Some(grammers_client::types::Media::Photo(_)) => {
+                (Some("image/jpeg".to_string()), None)
+            }
+            Some(grammers_client::types::Media::Sticker(sticker)) => {
+                let mime = sticker.document.mime_type().map(|s| s.to_string());
+                (mime, None)
+            }
+            _ => (None, None),
+        };
+        
+        let download_path = crate::tg::utils::get_media_path_with_extension(
+            chat_id, 
+            message_id, 
+            mime_type.as_deref(), 
+            file_name.as_deref()
+        );
+
+        // 检查文件是否已存在
+        if std::path::Path::new(&download_path).exists() {
+            debug!("Media already downloaded at: {}", download_path);
+            return Ok(download_path);
+        }
+
+        // 创建目录并下载
+        if !std::path::Path::new(&download_dir).exists() {
+            std::fs::create_dir_all(&download_dir)?;
+        }
+        
+        match message.download_media(&download_path).await {
+            Ok(true) => {
+                debug!("Media downloaded successfully to: {}", download_path);
+                Ok(download_path)
+            }
+            Ok(false) => {
+                error!("Failed to download media: download returned false");
+                Err(anyhow::anyhow!("Failed to download media"))
+            }
+            Err(e) => {
+                error!("Failed to download media: {}", e);
+                Err(anyhow::Error::from(e))
             }
         }
     }

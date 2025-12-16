@@ -11,6 +11,56 @@ pub fn get_download_dir(chat_id: i64) -> String {
     format!("{}/{}/", MEDIAS_DIR, chat_id)
 }
 
+/// 根据 MIME 类型推断文件扩展名
+pub fn get_extension_from_mime(mime_type: Option<&str>) -> &'static str {
+    match mime_type {
+        Some("image/jpeg") | Some("image/jpg") => "jpg",
+        Some("image/png") => "png",
+        Some("image/gif") => "gif",
+        Some("image/webp") => "webp",
+        Some("video/mp4") => "mp4",
+        Some("video/webm") => "webm",
+        Some("video/quicktime") => "mov",
+        Some("video/x-matroska") => "mkv",
+        Some("audio/mpeg") | Some("audio/mp3") => "mp3",
+        Some("audio/ogg") => "ogg",
+        Some("audio/wav") => "wav",
+        Some("audio/aac") => "aac",
+        Some("application/pdf") => "pdf",
+        Some("application/x-tgsticker") => "tgs",
+        Some("application/zip") => "zip",
+        Some("application/x-rar-compressed") => "rar",
+        Some(mime) if mime.starts_with("video/") => "mp4",  // 默认视频
+        Some(mime) if mime.starts_with("audio/") => "mp3",  // 默认音频
+        Some(mime) if mime.starts_with("image/") => "jpg",  // 默认图片
+        _ => "bin",  // 未知类型
+    }
+}
+
+/// 从文件名中提取扩展名
+pub fn get_extension_from_filename(filename: &str) -> Option<&str> {
+    filename.rsplit('.').next().filter(|ext| !ext.is_empty() && ext.len() < 10)
+}
+
+/// 根据媒体信息构建下载路径（带正确扩展名）
+pub fn get_media_path_with_extension(
+    chat_id: i64, 
+    message_id: i32, 
+    mime_type: Option<&str>,
+    file_name: Option<&str>
+) -> String {
+    // 优先使用文件名中的扩展名
+    let extension = if let Some(fname) = file_name {
+        get_extension_from_filename(fname).unwrap_or_else(|| get_extension_from_mime(mime_type))
+    } else {
+        get_extension_from_mime(mime_type)
+    };
+    
+    format!("{}/{}/{}.{}", MEDIAS_DIR, chat_id, message_id, extension)
+}
+
+/// 旧的硬编码路径函数（保留以兼容性）
+#[deprecated(note = "Use get_media_path_with_extension instead")]
 pub fn get_media_path(chat_id: i64, message_id: i32) -> String {
     format!("{}/{}/{}.jpg", MEDIAS_DIR, chat_id, message_id)
 }
