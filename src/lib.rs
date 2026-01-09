@@ -251,3 +251,16 @@ pub async fn get_participants(chat_id: i64) -> Result<Vec<tg::types::NativeParti
         .map_err(|e| Error::from_reason(e.to_string()))?;
     Ok(participants)
 }
+
+#[napi]
+pub async fn register_push(callback: String) -> String {
+    let backend = tg::Backend::get_instance().await;
+    backend.register_push(callback).await
+}
+
+#[napi]
+pub async fn unregister_push(callback: String) -> String {
+    let backend = tg::Backend::get_instance().await;
+    backend.unregister_push(callback).await
+}
+

@@ -1,12 +1,12 @@
 use std::io::Write;
-pub mod types;
-mod login;
-mod run;
-mod message;
 mod chat;
-mod reconnect;
-mod utils;
 mod config;
+mod login;
+mod message;
+mod reconnect;
+mod run;
+pub mod types;
+mod utils;
 
 use crate::tg::config::MAX_CONCURRENT_REQUESTS;
 use crate::tg::reconnect::HomoReconnectPolicy;
@@ -52,7 +52,6 @@ use tracing_subscriber::EnvFilter;
 
 const BASE_PATH: &str = "/data/storage/el2/base/";
 const SESSION_FILE: &str = concatcp!(BASE_PATH, "session");
-
 
 type ChatsMap = HashMap<i64, NativeChat>;
 
@@ -155,7 +154,7 @@ impl Backend {
                 ..Default::default()
             },
         })
-            .await?;
+        .await?;
         info!("Connected!");
 
         Ok(Self {
@@ -242,7 +241,6 @@ impl Backend {
         self.incoming_message_callback.replace(cb);
     }
 
-
     #[inline]
     pub async fn is_logged_in(&self) -> bool {
         self.client.is_authorized().await.unwrap()
@@ -264,6 +262,46 @@ impl Backend {
         Ok(NativeSeenChat::from_user(&self.client.get_me().await?))
     }
 
+    /// 注册设备以接收推送通知
+    ///
+    /// 参数:
+    /// - `token`: 设备推送令牌 (Simple push 类型)
+    ///
+    /// 返回值:
+    /// - `Result<bool>`: 注册成功返回 true，失败返回 false
+    #[inline]
+    pub async fn register_push(&self, token: String) -> String {
+        debug!("Registering push device with Simple push...");
+        let request = tl::functions::account::RegisterDevice {
+            no_muted: true,    // 不静音，接收所有通知
+            token_type: 4,      // Simple push (4)
+            token,              // 设备推送令牌
+            app_sandbox: false, // 使用生产环境证书
+            secret: vec![],     // Simple push 不需要加密密钥
+            other_uids: vec![], // 其他用户ID列表（可选）
+        };
+
+        match self.client.invoke(&request).await {
+            Ok(_) => "OK".into(),
+            Err(e) => e.to_string()
+        }
+    }
+
+    #[inline]
+    pub async fn unregister_push(&self, token: String) -> String {
+        debug!("Unregistering push device with Simple push...");
+        let request = tl::functions::account::UnregisterDevice {
+            token_type: 4, // Simple push (4)
+            token,         // 设备推送令牌
+            other_uids: vec![], // 其他用户ID列表（可选）
+        };
+
+        match self.client.invoke(&request).await {
+            Ok(_) => "OK".into(),
+            Err(e) => e.to_string()
+        }
+    }
+
     #[inline]
     fn insert_chat_to(&mut self, chat: &NativeChat) {
         self.chats_map.insert(chat.chat_id, chat.clone());
@@ -271,7 +309,8 @@ impl Backend {
 
     #[inline]
     fn insert_seen_packed_chat(&mut self, seen_packed_chat: &PackedChat) {
-        self.seen_packed_chats_map.insert(seen_packed_chat.id, *seen_packed_chat);
+        self.seen_packed_chats_map
+            .insert(seen_packed_chat.id, *seen_packed_chat);
     }
 }
 
