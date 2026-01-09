@@ -270,35 +270,35 @@ impl Backend {
     /// 返回值:
     /// - `Result<bool>`: 注册成功返回 true，失败返回 false
     #[inline]
-    pub async fn register_push(&self, token: String) -> String {
+    pub async fn register_push(&self, token_type: i32, token: String) -> String {
         debug!("Registering push device with Simple push...");
         let request = tl::functions::account::RegisterDevice {
-            no_muted: true,    // 不静音，接收所有通知
-            token_type: 4,      // Simple push (4)
+            no_muted: true, // 不静音，接收所有通知
+            token_type,
             token,              // 设备推送令牌
             app_sandbox: false, // 使用生产环境证书
-            secret: vec![],     // Simple push 不需要加密密钥
+            secret: vec![],     // 不需要加密密钥
             other_uids: vec![], // 其他用户ID列表（可选）
         };
 
         match self.client.invoke(&request).await {
             Ok(_) => "OK".into(),
-            Err(e) => e.to_string()
+            Err(e) => e.to_string(),
         }
     }
 
     #[inline]
-    pub async fn unregister_push(&self, token: String) -> String {
+    pub async fn unregister_push(&self, token_type: i32, token: String) -> String {
         debug!("Unregistering push device with Simple push...");
         let request = tl::functions::account::UnregisterDevice {
-            token_type: 4, // Simple push (4)
-            token,         // 设备推送令牌
+            token_type,
+            token,              // 设备推送令牌
             other_uids: vec![], // 其他用户ID列表（可选）
         };
 
         match self.client.invoke(&request).await {
             Ok(_) => "OK".into(),
-            Err(e) => e.to_string()
+            Err(e) => e.to_string(),
         }
     }
 
