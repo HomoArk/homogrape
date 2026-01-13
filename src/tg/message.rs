@@ -1,7 +1,9 @@
 use crate::tg::types::{
     MediaType, NativeChat, NativeMessage, NativeSeenChat, UpdateUploadProgressCallback,
 };
-use crate::tg::utils::{get_download_dir, get_media_path_with_extension, get_profile_photo_path_and_count};
+use crate::tg::utils::{
+    get_download_dir, get_media_path_with_extension, get_profile_photo_path_and_count,
+};
 use crate::tg::Backend;
 use anyhow::Result;
 use grammers_client::client::messages::MessageIter;
@@ -280,31 +282,61 @@ impl Backend {
         }
     }
 
+    pub async fn forward_messages(
+        &self,
+        from_chat_id: i64,
+        to_chat_id: i64,
+        message_ids: Vec<i32>,
+    ) -> Result<Vec<Option<NativeMessage>>> {
+        debug!(
+            "Forwarding messages {:?} from chat {} to chat {}",
+            message_ids, from_chat_id, to_chat_id
+        );
+        let from_chat = self
+            .seen_packed_chats_map
+            .get(&from_chat_id)
+            .ok_or_else(|| anyhow::anyhow!("Chat {} not found in chats_map", from_chat_id))?
+            .clone();
+        let to_chat = self
+            .seen_packed_chats_map
+            .get(&to_chat_id)
+            .ok_or_else(|| anyhow::anyhow!("Chat {} not found in chats_map", to_chat_id))?
+            .clone();
+        let res = self
+            .client
+            .forward_messages(to_chat, &message_ids, from_chat)
+            .await?;
+        Ok(res
+            .into_iter()
+            .map(|m| m.map(|msg| NativeMessage::from_raw(&msg)))
+            .collect::<Vec<_>>())
+    }
+
     pub async fn download_media_from_message(
         &self,
         chat_id: i64,
         message_id: i32,
     ) -> Result<String> {
         debug!("Downloading media from message with id {}", message_id);
-        
+
         let packed_chat = self
             .seen_packed_chats_map
             .get(&chat_id)
             .ok_or_else(|| anyhow::anyhow!("Chat {} not found in chats_map", chat_id))?
             .clone();
-        
+
         let mut messages = self
             .client
             .get_messages_by_id(packed_chat, &[message_id])
             .await?;
-        
+
         let message = messages
             .pop()
             .and_then(|m| m)
             .ok_or_else(|| anyhow::anyhow!("Message {} not found", message_id))?;
 
         let download_dir = get_download_dir(chat_id);
-        
+
         // 从消息中提取 MIME 类型和文件名
         let (mime_type, file_name) = match message.media() {
             Some(grammers_client::types::Media::Document(doc)) => {
@@ -322,21 +354,19 @@ impl Backend {
                 };
                 (mime, fname)
             }
-            Some(grammers_client::types::Media::Photo(_)) => {
-                (Some("image/jpeg".to_string()), None)
-            }
+            Some(grammers_client::types::Media::Photo(_)) => (Some("image/jpeg".to_string()), None),
             Some(grammers_client::types::Media::Sticker(sticker)) => {
                 let mime = sticker.document.mime_type().map(|s| s.to_string());
                 (mime, None)
             }
             _ => (None, None),
         };
-        
+
         let download_path = crate::tg::utils::get_media_path_with_extension(
-            chat_id, 
-            message_id, 
-            mime_type.as_deref(), 
-            file_name.as_deref()
+            chat_id,
+            message_id,
+            mime_type.as_deref(),
+            file_name.as_deref(),
         );
 
         // 检查文件是否已存在
@@ -349,7 +379,7 @@ impl Backend {
         if !std::path::Path::new(&download_dir).exists() {
             std::fs::create_dir_all(&download_dir)?;
         }
-        
+
         match message.download_media(&download_path).await {
             Ok(true) => {
                 debug!("Media downloaded successfully to: {}", download_path);

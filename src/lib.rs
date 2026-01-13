@@ -208,6 +208,24 @@ pub async fn send_message(
 }
 
 #[napi]
+pub async fn forward_messages(
+    from_chat_id: i64,
+    to_chat_id: i64,
+    message_ids: Vec<i32>,
+) -> Result<Vec<Option<NativeMessage>>> {
+    let backend = tg::Backend::get_instance().await;
+    let messages = backend
+        .forward_messages(
+            from_chat_id,
+            to_chat_id,
+            message_ids,
+        )
+        .await
+        .map_err(|e| Error::from_reason(e.to_string()))?;
+    Ok(messages)
+}
+
+#[napi]
 pub async fn download_media_from_message(chat_id: i64, message_id: i32) -> Result<String> {
     let backend = tg::Backend::get_instance().await;
     let path = backend
