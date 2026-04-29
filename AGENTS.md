@@ -53,7 +53,7 @@ cargo xtask dist ../../../../libs/arm64-v8a/
 - Keep Rust changes scoped. This submodule is consumed by the parent app and should not be rewritten casually.
 - Preserve the exported API shape expected by ArkTS imports such as `login`, `verifyCode`, `password`, `signOut`, `run`, and `reconnect` unless the parent app is updated in the same change.
 - When touching Telegram config handling, keep `src/tg/config.rs` and `src/tg/config.rs.template` aligned.
-
+- Do not introduce too much defensive logic. Instead, think in-depth and design carefully to ensure the code quality and correctness in a structural way.
 ## Parent App Handoff
 
 After rebuilding this submodule, the parent repo should package the `phone` HAP with Hvigor. The parent repo's root `AGENTS.md` contains the full HAP/signing workflow.

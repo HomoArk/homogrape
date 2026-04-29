@@ -70,10 +70,10 @@ pub async fn sign_out() -> bool {
 #[napi]
 pub async fn run() -> Result<()> {
     debug!("homo::run() called");
-    if let Some(handler) = tg::Backend::get_instance().await.get_run_handler().await {
-        if !handler.is_finished() {
-            return Err(Error::from_reason("homo::tg::Backend::run() already "));
-        }
+    if tg::Backend::get_instance().await.is_run_handler_active().await {
+        return Err(Error::from_reason(
+            "homo::tg::Backend::run() already active",
+        ));
     }
     let handler = tokio::spawn(tg::Backend::get_instance().await.run());
     tg::Backend::get_instance()
@@ -86,14 +86,11 @@ pub async fn run() -> Result<()> {
 #[napi]
 pub async fn stop() {
     debug!("homo::stop() called");
-    match tg::Backend::get_instance().await.get_run_handler().await {
-        Some(handler) => {
-            handler.abort();
+    match tg::Backend::get_instance().await.abort_run_handler().await {
+        true => {
             debug!("homo::tg::Backend::run_handler aborted")
-            // no need to drop manually
-            // std::mem::drop(handler);
         }
-        None => {
+        false => {
             error!("homo::tg::Backend::run() already stopped");
         }
     }
@@ -147,7 +144,10 @@ pub async fn load_chats_with_offset(last_message_ids: HashMap<String, i32>) -> R
     let backend = tg::Backend::get_instance().await;
     let dash_map = dashmap::DashMap::with_capacity(last_message_ids.len());
     for (chat_id, last_message_id) in last_message_ids {
-        dash_map.insert(chat_id.parse().unwrap(), last_message_id);
+        let parsed_chat_id = chat_id
+            .parse()
+            .map_err(|_| Error::from_reason(format!("Invalid chat id: {chat_id}")))?;
+        dash_map.insert(parsed_chat_id, last_message_id);
     }
     backend
         .load_chats_with_offset(Some(dash_map))

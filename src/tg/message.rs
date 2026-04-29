@@ -16,6 +16,7 @@ use napi_ohos::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_ohos::tokio;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use napi_ohos::bindgen_prelude::FnArgs;
 
 impl Backend {
     pub(crate) async fn incoming_message_handler(&'static self, raw_message: &Message) {
@@ -54,7 +55,7 @@ impl Backend {
                 self.incoming_message_callback
                     .as_ref()
                     .unwrap()
-                    .call(Ok((None, message)), ThreadsafeFunctionCallMode::NonBlocking);
+                    .call(Ok(FnArgs::from((None, message))), ThreadsafeFunctionCallMode::NonBlocking);
             }
             None => {
                 drop(old_chat);
@@ -81,7 +82,7 @@ impl Backend {
                     .as_ref()
                     .expect("incoming_message_callback is None")
                     .call(
-                        Ok((Some(chat), message)),
+                        Ok(FnArgs::from((Some(chat), message))),
                         ThreadsafeFunctionCallMode::NonBlocking,
                     );
             }
@@ -198,10 +199,7 @@ impl Backend {
         let packed_chat = self
             .seen_packed_chats_map
             .get(&chat_id)
-            .unwrap_or_else(|| {
-                error!("Chat with id {} not found in chats_map!", chat_id);
-                panic!("Chat with id {} not found in chats_map!", chat_id)
-            })
+            .ok_or_else(|| anyhow::anyhow!("Chat with id {} not found in chats_map", chat_id))?
             .clone();
         let mut album = Vec::new();
 
@@ -214,20 +212,11 @@ impl Backend {
             for (index, media) in medias.iter().enumerate() {
                 let raw_file = std::fs::read(media)?;
                 let len = raw_file.len();
-                // use std::io::Cursor to keep track of the progress
                 let mut stream = std::io::Cursor::new(raw_file);
-                let stream_leaked = Box::leak(Box::new(stream.clone()));
-                let callback_ref = Box::leak(Box::new(update_upload_progress_callback.clone()));
-                let _handler = tokio::spawn(async move {
-                    while stream_leaked.position() < (len - 1) as u64 {
-                        let progress = (stream_leaked.position() as f64 / len as f64) * 100f64;
-                        callback_ref.call(
-                            Ok((index as i64, progress as i64)),
-                            ThreadsafeFunctionCallMode::NonBlocking,
-                        );
-                        // sleep for short time to avoid high CPU usage
-                    }
-                });
+                update_upload_progress_callback.call(
+                    Ok(FnArgs::from((index as i64, 0))),
+                    ThreadsafeFunctionCallMode::NonBlocking,
+                );
                 let file_name = std::path::Path::new(media)
                     .file_name()
                     .unwrap()
@@ -242,6 +231,10 @@ impl Backend {
                     .await;
                 match uploaded_file {
                     Ok(file) => {
+                        update_upload_progress_callback.call(
+                            Ok(FnArgs::from((index as i64, 100))),
+                            ThreadsafeFunctionCallMode::NonBlocking,
+                        );
                         let input_media = if index == 0 {
                             InputMedia::new().caption(text.clone())
                         } else {

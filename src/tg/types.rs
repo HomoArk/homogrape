@@ -4,7 +4,7 @@ use grammers_client::peer::{Channel, Dialog, Group, Participant, Peer, Role, Use
 use grammers_client::tl;
 use grammers_session::types::{PeerAuth, PeerId, PeerInfo, PeerRef};
 use napi_derive_ohos::napi;
-use napi_ohos::bindgen_prelude::Promise;
+use napi_ohos::bindgen_prelude::{FnArgs, Promise};
 use napi_ohos::threadsafe_function::ThreadsafeFunction;
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
@@ -12,11 +12,11 @@ use std::hash::Hash;
 pub type LoadChatsCallback = ThreadsafeFunction<(), Promise<()>>;
 pub type CacheSeenChatCallback = ThreadsafeFunction<NativeSeenChat, Promise<()>>;
 pub type UpdateChatCallback =
-    ThreadsafeFunction<(NativeSeenChat, NativeChat, Vec<NativeMessage>), Promise<()>>;
-pub type IncomingMessageCallback = ThreadsafeFunction<(Option<NativeChat>, NativeMessage)>;
+    ThreadsafeFunction<FnArgs<(NativeSeenChat, NativeChat, Vec<NativeMessage>)>, Promise<()>>;
+pub type IncomingMessageCallback = ThreadsafeFunction<FnArgs<(Option<NativeChat>, NativeMessage)>, Promise<()>>;
 
 // (media_index, current_progress): void => {}
-pub type UpdateUploadProgressCallback = ThreadsafeFunction<(i64, i64), Promise<()>>;
+pub type UpdateUploadProgressCallback = ThreadsafeFunction<FnArgs<(i64, i64)>, Promise<()>>;
 #[derive(Debug, PartialEq)]
 #[napi]
 pub enum LoginState {

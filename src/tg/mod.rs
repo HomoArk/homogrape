@@ -70,7 +70,7 @@ pub struct Backend {
     load_chats_callback: Option<LoadChatsCallback>,
     update_chat_callback: Option<UpdateChatCallback>,
     incoming_message_callback: Option<IncomingMessageCallback>,
-    run_handler: Option<tokio::task::JoinHandle<Result<()>>>,
+    run_handler: Mutex<Option<tokio::task::JoinHandle<Result<()>>>>,
     profile_photo_downloading_set: HashSet<i64>,
     save_session_mutex: Mutex<()>,
     global_semaphore: Semaphore,
@@ -181,7 +181,7 @@ impl Backend {
             load_chats_callback: None,
             update_chat_callback: None,
             incoming_message_callback: None,
-            run_handler: None,
+            run_handler: Mutex::new(None),
             profile_photo_downloading_set: HashSet::default(),
             seen_packed_chats_map: HashMap::default(),
             save_session_mutex: Mutex::new(()),
@@ -238,7 +238,7 @@ impl Backend {
 
     #[inline]
     pub async fn is_logged_in(&self) -> bool {
-        self.client.is_authorized().await.unwrap()
+        self.client.is_authorized().await.unwrap_or(false)
     }
 
     #[inline]

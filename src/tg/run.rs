@@ -24,11 +24,25 @@ impl Backend {
         }
     }
 
-    pub async fn set_run_handler(&mut self, handler: tokio::task::JoinHandle<Result<()>>) {
-        self.run_handler.replace(handler);
+    pub async fn set_run_handler(&self, handler: tokio::task::JoinHandle<Result<()>>) {
+        self.run_handler.lock().await.replace(handler);
     }
 
-    pub async fn get_run_handler(&mut self) -> Option<tokio::task::JoinHandle<Result<()>>> {
-        self.run_handler.take()
+    pub async fn is_run_handler_active(&self) -> bool {
+        self.run_handler
+            .lock()
+            .await
+            .as_ref()
+            .map(|handler| !handler.is_finished())
+            .unwrap_or(false)
+    }
+
+    pub async fn abort_run_handler(&self) -> bool {
+        if let Some(handler) = self.run_handler.lock().await.take() {
+            handler.abort();
+            true
+        } else {
+            false
+        }
     }
 }

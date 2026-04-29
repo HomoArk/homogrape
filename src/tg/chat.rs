@@ -11,7 +11,7 @@ use grammers_client::tl;
 use grammers_session::types::PeerRef;
 use grammers_tl_types::Serializable;
 use log::{debug, error};
-use napi_ohos::bindgen_prelude::Buffer;
+use napi_ohos::bindgen_prelude::{Buffer, FnArgs};
 use napi_ohos::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_ohos::tokio;
 use ohos_hilog_binding::debug;
@@ -105,11 +105,11 @@ impl Backend {
             self.chats_map.insert(raw_chat.id().bare_id(), chat.clone());
             debug!("before update_chat_callback call: chat name: {}", chat.name);
             self.update_chat_callback.as_ref().unwrap().call(
-                Ok((
+                Ok(FnArgs::from((
                     native_seen_chat,
                     chat,
                     sorted_messages.values().cloned().collect(),
-                )),
+                ))),
                 ThreadsafeFunctionCallMode::NonBlocking,
             );
         }
@@ -196,7 +196,7 @@ impl Backend {
         if self.profile_photo_downloading_set.contains(&chat_id) {
             error!("Profile photo for chat {} is already downloading!", chat_id);
             while self.profile_photo_downloading_set.contains(&chat_id) {
-                tokio::time::sleep(std::time::Duration::from_secs(200)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
             return true;
         }
