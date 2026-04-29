@@ -1,5 +1,6 @@
 use crate::tg::types::LoginState;
 use crate::tg::Backend;
+use crate::tg::config::TELEGRAM_API_HASH;
 use anyhow::Result;
 use grammers_client::SignInError;
 use log::{debug, error};
@@ -9,7 +10,10 @@ impl Backend {
         if !self.is_logged_in().await {
             debug!("Signing in...");
 
-            let login_token = self.client.request_login_code(&phone).await;
+            let login_token = self
+                .client
+                .request_login_code(&phone, TELEGRAM_API_HASH)
+                .await;
             match login_token {
                 Ok(token) => {
                     self.login_token.replace(token);
@@ -77,7 +81,7 @@ impl Backend {
         if !self.is_logged_in().await {
             let signed_in = self
                 .client
-                .check_password(self.password_token.clone().unwrap(), &password)
+                .check_password(self.password_token.take().unwrap(), &password)
                 .await;
             match signed_in {
                 Ok(user) => {

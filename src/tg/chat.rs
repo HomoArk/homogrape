@@ -1,11 +1,14 @@
-use crate::tg::types::{ChatType, NativeChat, NativePackedChat, NativeRawMessage, NativeSeenChat};
+use crate::tg::types::{
+    peer_ref_from_string, ChatType, NativeChat, NativePackedChat, NativeRawMessage, NativeSeenChat,
+};
 use crate::tg::utils::{get_profile_photo_path_and_count, ProfilePhotoPath};
 use crate::tg::Backend;
 use anyhow::Result;
 use dashmap::{DashMap as HashMap, DashSet as HashSet};
-use grammers_client::types::{Chat, Downloadable};
-use grammers_client::{grammers_tl_types as tl, InitParams};
-use grammers_session::PackedChat;
+use grammers_client::media::Downloadable;
+use grammers_client::peer::Peer;
+use grammers_client::tl;
+use grammers_session::types::PeerRef;
 use grammers_tl_types::Serializable;
 use log::{debug, error};
 use napi_ohos::bindgen_prelude::Buffer;
@@ -53,10 +56,10 @@ impl Backend {
         while let Some(dialog) = dialog_iter.next().await? {
             tokio::spawn(self.save_session());
             // let dialog = Box::leak(Box::new(dialog));
-            let raw_chat = dialog.chat();
+            let raw_chat = dialog.peer();
             let mut chat = NativeChat::from_raw(raw_chat).await;
             debug!("Loading chat:{}, chat_type: {:?}, forum: {}", chat.name, chat.chat_type, chat.forum);
-            let packed_chat = raw_chat.pack();
+            let packed_chat = dialog.peer_ref();
             // let profile_photo_path = Box::leak(Box::new(get_profile_photo_path_and_count(raw_chat.id())?));
             // if profile_photo_path.current.is_none() {
             //     let packed_chat = Box::leak(Box::new(packed_chat));
@@ -70,7 +73,7 @@ impl Backend {
             } else {
                 None
             };
-            let message_iter = self.client.iter_messages(raw_chat);
+            let message_iter = self.client.iter_messages(packed_chat);
             debug!("Loading chat: {} after {:?}", chat.name, last_message_id);
             let sorted_messages =
                 self.load_messages_from_iter(message_iter, last_message_id).await?;
@@ -93,13 +96,13 @@ impl Backend {
             chat.last_message_sender_name = last_message.sender_name.clone();
             chat.last_message_text = last_message.text.clone();
             chat.last_message_timestamp = last_message.timestamp;
-            self.seen_packed_chats_map.insert(packed_chat.id, packed_chat);
+            self.seen_packed_chats_map.insert(chat.chat_id, packed_chat);
             let native_seen_chat = NativeSeenChat::from_raw(raw_chat);
             self.cache_seen_chat_callback
                 .as_ref()
                 .unwrap()
                 .call(Ok(native_seen_chat.clone()), ThreadsafeFunctionCallMode::NonBlocking);
-            self.chats_map.insert(raw_chat.id(), chat.clone());
+            self.chats_map.insert(raw_chat.id().bare_id(), chat.clone());
             debug!("before update_chat_callback call: chat name: {}", chat.name);
             self.update_chat_callback.as_ref().unwrap().call(
                 Ok((
@@ -123,7 +126,10 @@ impl Backend {
         chats: Vec<NativeChat>,
     ) -> Result<()> {
         for packed_chat in packed_chats.iter() {
-            self.seen_packed_chats_map.insert(packed_chat.chat_id, PackedChat::from_hex(packed_chat.packed_chat.as_str())?);
+            self.seen_packed_chats_map.insert(
+                packed_chat.chat_id,
+                peer_ref_from_string(packed_chat.packed_chat.as_str())?,
+            );
         }
         for chat in chats.iter() {
             self.chats_map.insert(chat.chat_id, chat.clone());
@@ -168,10 +174,14 @@ impl Backend {
     //     Ok(chats)
     // }
 
-    pub(crate) async fn download_sender_chat_photo(&self, sender: Option<grammers_client::types::Chat>) -> Result<()> {
+    pub(crate) async fn download_sender_chat_photo(&self, sender: Option<Peer>) -> Result<()> {
         if let Some(sender) = sender {
-            debug!("Downloading profile photo for sender: {}, id: {}", sender.name(), sender.id());
-            let profile_photo_path = get_profile_photo_path_and_count(sender.id())?;
+            debug!(
+                "Downloading profile photo for sender: {}, id: {}",
+                sender.name().unwrap_or(""),
+                sender.id().bare_id()
+            );
+            let profile_photo_path = get_profile_photo_path_and_count(sender.id().bare_id())?;
             if profile_photo_path.current.is_none() {
                 self.download_chat_photo(&sender, true, &profile_photo_path).await
             } else {
@@ -193,17 +203,17 @@ impl Backend {
         false
     }
 
-    pub(crate) async fn download_chat_photo(&self, chat: &Chat, big: bool,
+    pub(crate) async fn download_chat_photo(&self, chat: &Peer, big: bool,
                                             profile_photo_path: &ProfilePhotoPath) -> Result<()> {
         let ret: Result<()>;
 
-        if self.check_chat_photo_downloading_and_wait(chat.id()).await {
+        if self.check_chat_photo_downloading_and_wait(chat.id().bare_id()).await {
             ret = Ok(());
         } else {
-            debug!("download_chat_photo Downloading profile photo for chat {}", chat.name());
-            let profile_photo = chat.photo_downloadable(big);
+            debug!("download_chat_photo Downloading profile photo for chat {}", chat.name().unwrap_or(""));
+            let profile_photo = chat.photo(big).await;
             if let Some(profile_photo) = profile_photo {
-                self.profile_photo_downloading_set.insert(chat.id());
+                self.profile_photo_downloading_set.insert(chat.id().bare_id());
 
                 {
                     // TODO: invoke this in high frequency may cause FLOOD_WAIT
@@ -212,15 +222,15 @@ impl Backend {
                     // debug!("download_chat_photo acquiring global_semaphore");
                     // let _permit = self.global_semaphore.acquire().await?;
                     // debug!("download_chat_photo acquired global_semaphore");
-                    debug!("download_chat_photo Downloading profile photo for chat {} at {:?}", chat.name(), profile_photo_path.current);
+                    debug!("download_chat_photo Downloading profile photo for chat {} at {:?}", chat.name().unwrap_or(""), profile_photo_path.current);
                     self.client.download_media(&profile_photo, &profile_photo_path.next).await?;
                 }
 
-                self.profile_photo_downloading_set.remove(&chat.id());
-                debug!("download_chat_photo Downloaded profile photo for chat {} at {}", chat.name(), profile_photo_path.next);
+                self.profile_photo_downloading_set.remove(&chat.id().bare_id());
+                debug!("download_chat_photo Downloaded profile photo for chat {} at {}", chat.name().unwrap_or(""), profile_photo_path.next);
                 ret = Ok(());
             } else {
-                ret = Err(anyhow::anyhow!("download_chat_photo No profile photo found for chat {}", chat.name()));
+                ret = Err(anyhow::anyhow!("download_chat_photo No profile photo found for chat {}", chat.name().unwrap_or("")));
             }
         }
 
@@ -251,7 +261,7 @@ impl Backend {
             // let _permit = self.global_semaphore.acquire().await?;
             // debug!("download_chat_photo_by_chat_id acquired global_semaphore");
             debug!("download_chat_photo_by_chat_id unpacking chat for chat {}", chat_id);
-            self.client.unpack_chat(*chat.unwrap()).await?
+            self.client.resolve_peer(*chat.unwrap()).await?
         };
         debug!("download_chat_photo_by_chat_id unpacked chat got: {:?}", chat);
         self.download_chat_photo(&chat, big, &profile_photo_path).await?;
@@ -263,12 +273,12 @@ impl Backend {
         let packed_chat = self.seen_packed_chats_map.get(&chat_id);
         match packed_chat {
             Some(packed_chat) => {
-                let chat = self.client.unpack_chat(*packed_chat).await?;
+                let chat = self.client.resolve_peer(*packed_chat).await?;
 
                 match chat {
-                    Chat::User(user) => { Ok(user.photo().map(|photo| photo.stripped_thumb.clone()).unwrap_or(None)) }
-                    Chat::Group(group) => { Ok(group.photo().map(|photo| photo.stripped_thumb.clone()).unwrap_or(None)) }
-                    Chat::Channel(channel) => { Ok(channel.photo().map(|photo| photo.stripped_thumb.clone()).unwrap_or(None)) }
+                    Peer::User(user) => { Ok(user.photo().map(|photo| photo.stripped_thumb.clone()).unwrap_or(None)) }
+                    Peer::Group(group) => { Ok(group.photo().map(|photo| photo.stripped_thumb.clone()).unwrap_or(None)) }
+                    Peer::Channel(channel) => { Ok(channel.photo().map(|photo| photo.stripped_thumb.clone()).unwrap_or(None)) }
                 }
             }
             None => {
@@ -288,9 +298,8 @@ impl Backend {
         let packed_chat = self.seen_packed_chats_map.get(&chat_id);
         match packed_chat {
             Some(packed_chat) => {
-                let chat = self.client.unpack_chat(*packed_chat).await?;
                 let mut participants = Vec::new();
-                let mut iter = self.client.iter_participants(&chat);
+                let mut iter = self.client.iter_participants(*packed_chat);
                 while let Some(participant) = iter.next().await? {
                     participants.push(crate::tg::types::NativeParticipant::from_raw(&participant));
                 }

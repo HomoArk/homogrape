@@ -6,10 +6,11 @@ use crate::tg::utils::{
 };
 use crate::tg::Backend;
 use anyhow::Result;
-use grammers_client::client::messages::MessageIter;
-use grammers_client::types::Message;
-use grammers_client::{grammers_tl_types as tl, InputMedia};
-use grammers_tl_types::enums::InputMessage;
+use grammers_client::client::MessageIter;
+use grammers_client::media::{InputMedia, Media};
+use grammers_client::message::{InputMessage, Message};
+use grammers_client::peer::Peer;
+use grammers_client::tl;
 use log::{debug, error};
 use napi_ohos::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_ohos::tokio;
@@ -19,23 +20,23 @@ use std::sync::Arc;
 impl Backend {
     pub(crate) async fn incoming_message_handler(&'static self, raw_message: &Message) {
         self.seen_packed_chats_map
-            .insert(raw_message.chat().id(), raw_message.chat().pack());
+            .insert(raw_message.peer_id().bare_id(), raw_message.peer_ref().await.unwrap());
         self.cache_seen_chat_callback.as_ref().unwrap().call(
-            Ok(NativeSeenChat::from_raw(&raw_message.chat())),
+            Ok(NativeSeenChat::from_raw(raw_message.peer().unwrap())),
             ThreadsafeFunctionCallMode::NonBlocking,
         );
 
         if let Some(sender) = raw_message.sender() {
             self.seen_packed_chats_map
-                .insert(sender.id(), sender.pack());
+                .insert(sender.id().bare_id(), sender.to_ref().await.unwrap());
             self.cache_seen_chat_callback.as_ref().unwrap().call(
                 Ok(NativeSeenChat::from_raw(&sender)),
                 ThreadsafeFunctionCallMode::NonBlocking,
             );
         }
 
-        tokio::spawn(self.download_sender_chat_photo(raw_message.sender()));
-        let old_chat = self.chats_map.get_mut(&raw_message.chat().id());
+        tokio::spawn(self.download_sender_chat_photo(raw_message.sender().cloned()));
+        let old_chat = self.chats_map.get_mut(&raw_message.peer_id().bare_id());
         match old_chat {
             Some(mut old_chat) => {
                 debug!("tg::Backend::run() New message in chat {}", old_chat.name);
@@ -43,12 +44,11 @@ impl Backend {
                 debug!("tg::Backend::run() message: {:?}", message);
                 old_chat.last_message_sender_name = raw_message
                     .sender()
-                    .map(|s| s.name().to_string())
+                    .map(|s| s.name().unwrap_or("").to_string())
                     .unwrap_or("".to_string());
-                let raw_message = &raw_message.raw;
-                old_chat.last_message_id = raw_message.id;
-                old_chat.last_message_text = raw_message.message.clone();
-                old_chat.last_message_timestamp = raw_message.date as i64;
+                old_chat.last_message_id = raw_message.id();
+                old_chat.last_message_text = raw_message.text().to_string();
+                old_chat.last_message_timestamp = raw_message.date().timestamp();
                 debug!("tg::Backend::run() old_chat: {:?}", old_chat);
                 drop(old_chat);
                 self.incoming_message_callback
@@ -58,11 +58,11 @@ impl Backend {
             }
             None => {
                 drop(old_chat);
-                let raw_chat = raw_message.chat();
-                tokio::spawn(self.download_sender_chat_photo(raw_message.sender()));
+                let raw_chat = raw_message.peer().unwrap();
+                tokio::spawn(self.download_sender_chat_photo(raw_message.sender().cloned()));
                 debug!(
                     "New message in unknown chat {}: {}",
-                    raw_chat.name(),
+                    raw_chat.name().unwrap_or(""),
                     raw_message.text()
                 );
                 // let chat = Chat::from_raw(raw_chat.clone()).await;
@@ -75,7 +75,7 @@ impl Backend {
                 chat.last_message_timestamp = message.timestamp;
                 debug!("Chat: {:?}", chat);
                 debug!("Message: {:?}", message);
-                self.chats_map.insert(raw_chat.id(), chat.clone());
+                self.chats_map.insert(raw_chat.id().bare_id(), chat.clone());
                 debug!("chats_map updated!");
                 self.incoming_message_callback
                     .as_ref()
@@ -112,7 +112,7 @@ impl Backend {
             // tokio::spawn(self.download_sender_chat_photo(sender.clone()));
             if let Some(sender) = sender {
                 self.seen_packed_chats_map
-                    .insert(sender.id(), sender.pack());
+                    .insert(sender.id().bare_id(), sender.to_ref().await.unwrap());
                 self.cache_seen_chat_callback.as_ref().unwrap().call(
                     Ok(NativeSeenChat::from_raw(&sender)),
                     ThreadsafeFunctionCallMode::NonBlocking,
@@ -136,10 +136,8 @@ impl Backend {
             .ok_or_else(|| anyhow::anyhow!("Chat {} not found", chat_id))?
             .clone();
 
-        let chat = self.client.unpack_chat(packed_chat).await?;
-
         let mut messages = Vec::new();
-        let mut message_iter = self.client.iter_messages(&chat);
+        let mut message_iter = self.client.iter_messages(packed_chat);
         if let Some(limit) = limit {
             message_iter = message_iter.limit(limit as usize);
         }
@@ -151,7 +149,7 @@ impl Backend {
             // 缓存发送者信息
             if let Some(sender) = raw_message.sender() {
                 self.seen_packed_chats_map
-                    .insert(sender.id(), sender.pack());
+                    .insert(sender.id().bare_id(), sender.to_ref().await.unwrap());
                 if let Some(cb) = &self.cache_seen_chat_callback {
                     cb.call(
                         Ok(NativeSeenChat::from_raw(&sender)),
@@ -175,10 +173,11 @@ impl Backend {
 
     pub(crate) async fn get_sorted_messages(
         &self,
-        chat: &grammers_client::types::Chat,
+        chat: &Peer,
     ) -> Result<Vec<NativeMessage>> {
         let mut sorted_messages: Vec<NativeMessage> = Vec::new();
-        let mut messages = self.client.iter_messages(chat).limit(5);
+        let peer_ref = chat.to_ref().await.unwrap();
+        let mut messages = self.client.iter_messages(peer_ref).limit(5);
         while let Some(message) = messages.next().await? {
             sorted_messages.push(NativeMessage::from_raw(&message));
         }
@@ -204,7 +203,6 @@ impl Backend {
                 panic!("Chat with id {} not found in chats_map!", chat_id)
             })
             .clone();
-        use grammers_client::InputMessage;
         let mut album = Vec::new();
 
         if let Some(medias) = medias {
@@ -245,9 +243,9 @@ impl Backend {
                 match uploaded_file {
                     Ok(file) => {
                         let input_media = if index == 0 {
-                            InputMedia::caption(text.clone())
+                            InputMedia::new().caption(text.clone())
                         } else {
-                            InputMedia::caption("")
+                            InputMedia::new().caption("")
                         }
                         .photo(file);
                         album.push(input_media.reply_to(reply_to));
@@ -266,7 +264,7 @@ impl Backend {
                 .collect())
         } else {
             debug!("Sending text message: {}", text);
-            let msg = InputMessage::text(text).reply_to(reply_to);
+            let msg = InputMessage::new().text(text).reply_to(reply_to);
             let message_sent = self.client.send_message(packed_chat, msg).await;
             debug!("send_message returned: {:?}", message_sent);
             match message_sent {
@@ -339,7 +337,7 @@ impl Backend {
 
         // 从消息中提取 MIME 类型和文件名
         let (mime_type, file_name) = match message.media() {
-            Some(grammers_client::types::Media::Document(doc)) => {
+            Some(Media::Document(doc)) => {
                 let mime = doc.mime_type().map(|s| s.to_string());
                 let fname = if let Some(tl::enums::Document::Document(d)) = &doc.raw.document {
                     d.attributes.iter().find_map(|attr| {
@@ -354,8 +352,8 @@ impl Backend {
                 };
                 (mime, fname)
             }
-            Some(grammers_client::types::Media::Photo(_)) => (Some("image/jpeg".to_string()), None),
-            Some(grammers_client::types::Media::Sticker(sticker)) => {
+            Some(Media::Photo(_)) => (Some("image/jpeg".to_string()), None),
+            Some(Media::Sticker(sticker)) => {
                 let mime = sticker.document.mime_type().map(|s| s.to_string());
                 (mime, None)
             }

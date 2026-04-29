@@ -7,7 +7,6 @@ use crate::tg::types::{
     NativeSeenChat, UpdateChatCallback, UpdateUploadProgressCallback,
 };
 use crate::tg::types::{LoginState, NativeChat, NativeMessage};
-use grammers_session::PackedChat;
 use hilog::{Builder, LogDomain};
 use log::{debug, error, LevelFilter};
 use napi_derive_ohos::napi;
@@ -246,13 +245,13 @@ pub async fn download_profile_photo(chat_id: i64) -> Result<String> {
 }
 
 #[napi]
-pub async fn get_chat_photo_thumb(chat_id: i64) -> Result<Option<Buffer>> {
+pub async fn get_chat_photo_thumb(chat_id: i64) -> Result<Option<Vec<u8>>> {
     let backend = tg::Backend::get_instance().await;
     let thumb_vec = backend
         .get_chat_photo_thumb_by_chat_id(chat_id)
         .await
         .map_err(|e| Error::from_reason(e.to_string()))?;
-    Ok(thumb_vec.map(Buffer::from))
+    Ok(thumb_vec)
 }
 
 #[napi]

@@ -1,19 +1,7 @@
 use crate::tg::Backend;
-use anyhow::Result;
-use grammers_mtsender::ReconnectionPolicy;
 use log::{debug, error};
-use std::ops::ControlFlow;
-use std::time::Duration;
 
 pub(crate) struct HomoReconnectPolicy;
-
-impl ReconnectionPolicy for HomoReconnectPolicy {
-    fn should_retry(&self, attempts: usize) -> ControlFlow<(), Duration> {
-        debug!("Reconnecting attempt {}", attempts);
-        // retry after 1 second for developing phase
-        ControlFlow::Continue(Duration::from_secs(1))
-    }
-}
 
 impl Backend {
     #[inline]

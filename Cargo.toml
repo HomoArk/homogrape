@@ -9,8 +9,8 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-napi-ohos = { git = "https://github.com/HomoArk/ohos-rs.git", features = ["async", "tokio_full", "tokio_tracing"] }
-napi-derive-ohos = { git = "https://github.com/HomoArk/ohos-rs.git", version = "1.0.0" }
+napi-ohos = { version = "1.1.6", features = ["async", "tokio_full", "tokio_tracing"] }
+napi-derive-ohos = "1.1.6"
 encoding_rs = "0.8.34"
 log = "0.4.22"
 grammers-crypto = { git = "https://github.com/HomoArk/grammers.git" }
@@ -44,16 +44,16 @@ tracing-subscriber = { version = "0.3.18", features = ["tracing-log"] }
 tracing-ohos = { git = "https://github.com/HomoArk/tracing-ohos.git" }
 
 [build-dependencies]
-napi-build-ohos = { git = "https://github.com/HomoArk/ohos-rs.git", version = "1.0.0" }
+napi-build-ohos = "1.1.6"
 
-#[patch."https://github.com/HomoArk/grammers.git"]
-#grammers-crypto = { path = "../../../../../../../grammers/lib/grammers-crypto" }
-#grammers-client = { path = "../../../../../../../grammers/lib/grammers-client" }
-#grammers-session = { path = "../../../../../../../grammers/lib/grammers-session" }
-#grammers-mtproto = { path = "../../../../../../../grammers/lib/grammers-mtproto" }
-#grammers-mtsender = { path = "../../../../../../../grammers/lib/grammers-mtsender" }
-#grammers-tl-types = { path = "../../../../../../../grammers/lib/grammers-tl-types" }
-#
+[patch."https://github.com/HomoArk/grammers.git"]
+grammers-crypto = { path = "../../../../../../../grammers/grammers-crypto" }
+grammers-client = { path = "../../../../../../../grammers/grammers-client" }
+grammers-session = { path = "../../../../../../../grammers/grammers-session" }
+grammers-mtproto = { path = "../../../../../../../grammers/grammers-mtproto" }
+grammers-mtsender = { path = "../../../../../../../grammers/grammers-mtsender" }
+grammers-tl-types = { path = "../../../../../../../grammers/grammers-tl-types" }
+
 #[patch."https://github.com/HomoArk/hilog.git"]
 #hilog = { path = "../../../../../../../hilog" }
 #

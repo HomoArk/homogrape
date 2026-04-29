@@ -2,7 +2,7 @@ use crate::tg::types::{NativeChat, NativeMessage, NativeSeenChat};
 use crate::tg::utils::get_profile_photo_path_and_count;
 use crate::tg::{Backend, SESSION_FILE};
 use anyhow::Result;
-use grammers_client::Update;
+use grammers_client::update::Update;
 use grammers_session::Session;
 use log::{debug, info};
 use napi_ohos::threadsafe_function::ThreadsafeFunctionCallMode;
@@ -14,7 +14,7 @@ impl Backend {
     pub async fn run(&'static self) -> Result<()> {
         loop {
             debug!("tg::Backend::run() Waiting for next update...");
-            match self.client.next_update().await? {
+            match self.updates.lock().await.next().await? {
                 Update::NewMessage(ref raw_message) => {
                     self.incoming_message_handler(raw_message).await;
                 }

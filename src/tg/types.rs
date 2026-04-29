@@ -1,7 +1,10 @@
-use grammers_client::grammers_tl_types as tl;
-use grammers_client::types::Chat;
+use grammers_client::media::Media;
+use grammers_client::message::Message;
+use grammers_client::peer::{Channel, Dialog, Group, Participant, Peer, Role, User};
+use grammers_client::tl;
+use grammers_session::types::{PeerAuth, PeerId, PeerInfo, PeerRef};
 use napi_derive_ohos::napi;
-use napi_ohos::bindgen_prelude::{Buffer, Promise};
+use napi_ohos::bindgen_prelude::Promise;
 use napi_ohos::threadsafe_function::ThreadsafeFunction;
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
@@ -42,9 +45,8 @@ pub enum MediaType {
     WebPage,
 }
 
-impl From<Option<grammers_client::types::Media>> for MediaType {
-    fn from(value: Option<grammers_client::types::Media>) -> Self {
-        use grammers_client::types::Media;
+impl From<Option<Media>> for MediaType {
+    fn from(value: Option<Media>) -> Self {
         match value {
             Some(Media::Photo(_)) => MediaType::Photo,
             Some(Media::Document(_)) => MediaType::Document,
@@ -60,6 +62,40 @@ impl From<Option<grammers_client::types::Media>> for MediaType {
             _ => MediaType::None,
         }
     }
+}
+
+pub fn peer_ref_to_string(peer_ref: PeerRef) -> String {
+    format!(
+        "{}:{}",
+        peer_ref.id.bot_api_dialog_id(),
+        peer_ref.auth.hash()
+    )
+}
+
+fn peer_info_to_string(peer_info: PeerInfo) -> String {
+    peer_ref_to_string(PeerRef {
+        id: peer_info.id(),
+        auth: peer_info.auth().unwrap_or_default(),
+    })
+}
+
+pub fn peer_ref_from_string(value: &str) -> std::result::Result<PeerRef, anyhow::Error> {
+    let (id, auth) = value
+        .split_once(':')
+        .ok_or_else(|| anyhow::anyhow!("Invalid packed chat format"))?;
+    let id = id.parse::<i64>()?;
+    let auth = auth.parse::<i64>()?;
+    let peer_id = if id > 0 {
+        PeerId::user(id)
+    } else if id <= -1_000_000_000_000 {
+        PeerId::channel(-id - 1_000_000_000_000)
+    } else {
+        PeerId::chat(-id)
+    };
+    Ok(PeerRef {
+        id: peer_id,
+        auth: PeerAuth::from_hash(auth),
+    })
 }
 
 /// 消息格式化实体类型
@@ -237,12 +273,11 @@ pub struct NativePackedChat {
     pub packed_chat: String,
 }
 
-#[derive(Clone)]
 #[napi(object)]
 pub struct NativeRawMessage {
     pub chat_id: i64,
     pub message_id: i32,
-    pub raw_message: Buffer,
+    pub raw_message: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -272,17 +307,17 @@ pub struct NativeMessage {
 }
 
 impl NativeMessage {
-    pub fn from_raw(raw: &grammers_client::types::Message) -> Self {
+    pub fn from_raw(raw: &Message) -> Self {
         let mut sender_id = -1;
         let mut sender_name = "".to_string();
         if raw.sender().is_some() {
-            sender_id = raw.sender().unwrap().id();
-            sender_name = raw.sender().unwrap().name().to_string();
+            sender_id = raw.sender().unwrap().id().bare_id();
+            sender_name = raw.sender().unwrap().name().unwrap_or("").to_string();
         }
         
         // 提取 Sticker 信息
         let sticker_info =
-            if let Some(grammers_client::types::Media::Sticker(sticker)) = raw.media() {
+            if let Some(Media::Sticker(sticker)) = raw.media() {
                 let document = &sticker.document;
                 let mime = document.mime_type().unwrap_or("");
 
@@ -318,7 +353,7 @@ impl NativeMessage {
                     is_animated,
                     is_video,
                     mime_type: Some(mime.to_string()),
-                    file_size: Some(document.size() as i64),
+                    file_size: document.size().map(|size| size as i64),
                     width,
                     height,
                 })
@@ -333,7 +368,7 @@ impl NativeMessage {
         
         // 提取通用媒体信息
         let media_info = match raw.media() {
-            Some(grammers_client::types::Media::Photo(_photo)) => {
+            Some(Media::Photo(_photo)) => {
                 // Photo 类型没有简单的方法获取文件大小，这里不设置
                 Some(MediaInfo {
                     mime_type: Some("image/jpeg".to_string()),
@@ -344,7 +379,7 @@ impl NativeMessage {
                     duration: None,
                 })
             }
-            Some(grammers_client::types::Media::Document(doc)) => {
+            Some(Media::Document(doc)) => {
                 let mime = doc.mime_type().unwrap_or("application/octet-stream");
                 
                 // 从 attributes 中提取元数据
@@ -380,7 +415,7 @@ impl NativeMessage {
                 Some(MediaInfo {
                     mime_type: Some(mime.to_string()),
                     file_name,
-                    file_size: Some(doc.size() as i64),
+                    file_size: doc.size().map(|size| size as i64),
                     width,
                     height,
                     duration,
@@ -391,7 +426,7 @@ impl NativeMessage {
 
         Self {
             message_id: raw.id(),
-            chat_id: raw.chat().id(),
+            chat_id: raw.peer_id().bare_id(),
             outgoing: raw.outgoing(),
             pinned: raw.pinned(),
             sender_id,
@@ -454,16 +489,16 @@ pub enum ChatType {
 }
 
 impl ChatType {
-    pub fn from_chat(raw: &grammers_client::types::Chat) -> Self {
+    pub fn from_chat(raw: &Peer) -> Self {
         match raw {
-            grammers_client::types::Chat::User(_) => ChatType::User,
-            grammers_client::types::Chat::Group(_) => ChatType::Group,
-            grammers_client::types::Chat::Channel(_) => ChatType::Channel,
+            Peer::User(_) => ChatType::User,
+            Peer::Group(_) => ChatType::Group,
+            Peer::Channel(_) => ChatType::Channel,
         }
     }
 
-    pub fn from_dialog(dialog: &grammers_client::types::Dialog) -> Self {
-        Self::from_chat(dialog.chat())
+    pub fn from_dialog(dialog: &Dialog) -> Self {
+        Self::from_chat(dialog.peer())
     }
 }
 
@@ -484,7 +519,7 @@ pub struct NativeChat {
 }
 
 impl NativeChat {
-    pub async fn from_raw(raw: &grammers_client::types::Chat) -> Self {
+    pub async fn from_raw(raw: &Peer) -> Self {
         // let megagroup: bool = match raw {
         //     Chat::User(_) => { false }
         //     Chat::Group(g) => { g.is_megagroup() }
@@ -497,14 +532,14 @@ impl NativeChat {
         //         } else { false }
         //     } else { false }
         // } else { false };
-        let megagroup = matches!(raw, Chat::Group(g) if g.is_megagroup());
+        let megagroup = matches!(raw, Peer::Group(g) if g.is_megagroup());
         let forum = megagroup
-            && matches!(raw, Chat::Group(g)
+            && matches!(raw, Peer::Group(g)
             if matches!(&g.raw, tl::enums::Chat::Channel(c) if c.forum)); // TODO: check this
         Self {
-            chat_id: raw.id(),
+            chat_id: raw.id().bare_id(),
             chat_type: ChatType::from_chat(raw),
-            name: raw.name().to_string(),
+            name: raw.name().unwrap_or("").to_string(),
             pinned: false,
             last_message_id: 0,
             last_message_sender_name: "".to_string(),
@@ -515,19 +550,19 @@ impl NativeChat {
         }
     }
 
-    pub async fn from_dialog(dialog: grammers_client::types::Dialog) -> Self {
-        let chat = dialog.chat();
+    pub async fn from_dialog(dialog: Dialog) -> Self {
+        let chat = dialog.peer();
         let mut last_message_id = 0;
         let mut last_message_sender_name = "".to_string();
         let mut last_message_text = "".to_string();
         let mut last_message_timestamp = 0;
         let megagroup: bool = match chat {
-            Chat::User(_) => false,
-            Chat::Group(g) => g.is_megagroup(),
-            Chat::Channel(_) => false,
+            Peer::User(_) => false,
+            Peer::Group(g) => g.is_megagroup(),
+            Peer::Channel(_) => false,
         };
         let forum = if megagroup {
-            if let Chat::Group(g) = chat {
+            if let Peer::Group(g) = chat {
                 if let tl::enums::Chat::Channel(c) = &g.raw {
                     c.forum
                 } else {
@@ -543,15 +578,15 @@ impl NativeChat {
             last_message_id = message.id();
             last_message_sender_name = message
                 .sender()
-                .map(|s| s.name().to_string())
+                .map(|s| s.name().unwrap_or("").to_string())
                 .unwrap_or("".to_string());
             last_message_text = message.text().to_string();
             last_message_timestamp = message.date().timestamp();
         }
         Self {
-            chat_id: dialog.chat().id(),
+            chat_id: dialog.peer().id().bare_id(),
             chat_type: ChatType::from_chat(chat),
-            name: chat.name().to_string(),
+            name: chat.name().unwrap_or("").to_string(),
             pinned: dialog.raw.pinned(),
             last_message_id,
             last_message_sender_name,
@@ -584,24 +619,24 @@ pub struct NativeSeenChat {
 
 #[napi]
 impl NativeSeenChat {
-    pub fn from_raw(raw: &grammers_client::types::Chat) -> Self {
+    pub fn from_raw(raw: &Peer) -> Self {
         match raw {
-            grammers_client::types::Chat::User(user) => Self::from_user(user),
-            grammers_client::types::Chat::Group(group) => Self::from_group(group),
-            grammers_client::types::Chat::Channel(channel) => Self::from_channel(channel),
+            Peer::User(user) => Self::from_user(user),
+            Peer::Group(group) => Self::from_group(group),
+            Peer::Channel(channel) => Self::from_channel(channel),
         }
     }
-    pub fn from_user(raw: &grammers_client::types::User) -> Self {
+    pub fn from_user(raw: &User) -> Self {
         Self {
-            chat_id: raw.id(),
+            chat_id: raw.id().bare_id(),
             chat_type: ChatType::User,
-            packed_chat: raw.pack().to_hex(),
+            packed_chat: peer_info_to_string(PeerInfo::from(raw)),
             is_contact: raw.contact(),
             is_mutual_contact: raw.mutual_contact(),
             phone: raw.phone().map(|p| p.to_string()),
             username: raw.username().map(|u| u.to_string()),
             full_name: raw.full_name().to_string(),
-            first_name: raw.first_name().to_string(),
+            first_name: raw.first_name().unwrap_or("").to_string(),
             last_name: raw.last_name().map(|l| l.to_string()),
             bio: None,
             photo_thumb: raw
@@ -613,17 +648,17 @@ impl NativeSeenChat {
         }
     }
 
-    pub fn from_group(raw: &grammers_client::types::Group) -> Self {
+    pub fn from_group(raw: &Group) -> Self {
         Self {
-            chat_id: raw.id(),
+            chat_id: raw.id().bare_id(),
             chat_type: ChatType::Group,
-            packed_chat: raw.pack().to_hex(),
+            packed_chat: peer_info_to_string(PeerInfo::from(raw)),
             is_contact: false,
             is_mutual_contact: false,
             phone: None,
             username: None,
-            full_name: raw.title().to_string(),
-            first_name: raw.title().to_string(),
+            full_name: raw.title().unwrap_or("").to_string(),
+            first_name: raw.title().unwrap_or("").to_string(),
             last_name: None,
             bio: None,
             photo_thumb: raw
@@ -635,11 +670,11 @@ impl NativeSeenChat {
         }
     }
 
-    pub fn from_channel(raw: &grammers_client::types::Channel) -> Self {
+    pub fn from_channel(raw: &Channel) -> Self {
         Self {
-            chat_id: raw.id(),
+            chat_id: raw.id().bare_id(),
             chat_type: ChatType::Channel,
-            packed_chat: raw.pack().to_hex(),
+            packed_chat: peer_info_to_string(PeerInfo::from(raw)),
             is_contact: false,
             is_mutual_contact: false,
             phone: None,
@@ -674,9 +709,8 @@ pub enum NativeParticipantRole {
     Left,
 }
 
-impl From<&grammers_client::types::participant::Role> for NativeParticipantRole {
-    fn from(role: &grammers_client::types::participant::Role) -> Self {
-        use grammers_client::types::participant::Role;
+impl From<&Role> for NativeParticipantRole {
+    fn from(role: &Role) -> Self {
         match role {
             Role::User(_) => NativeParticipantRole::User,
             Role::Creator(_) => NativeParticipantRole::Creator,
@@ -709,11 +743,11 @@ pub struct NativeParticipant {
 }
 
 impl NativeParticipant {
-    pub fn from_raw(participant: &grammers_client::types::Participant) -> Self {
+    pub fn from_raw(participant: &Participant) -> Self {
         Self {
-            user_id: participant.user.id(),
+            user_id: participant.user.id().bare_id(),
             full_name: participant.user.full_name().to_string(),
-            first_name: participant.user.first_name().to_string(),
+            first_name: participant.user.first_name().unwrap_or("").to_string(),
             last_name: participant.user.last_name().map(|s| s.to_string()),
             username: participant.user.username().map(|s| s.to_string()),
             role: NativeParticipantRole::from(&participant.role),

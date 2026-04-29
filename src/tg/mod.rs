@@ -15,14 +15,14 @@ use anyhow::Result;
 use config::{SIGN_OUT_RETRIES, TELEGRAM_API_HASH, TELEGRAM_API_ID};
 use const_format::{concatcp, formatcp};
 use dashmap::{DashMap as HashMap, DashSet as HashSet};
-use grammers_client::client::messages::MessageIter;
-use grammers_client::session::Session;
-use grammers_client::types::{Dialog, LoginToken, PasswordToken, User};
-use grammers_client::{grammers_tl_types as tl, InitParams};
-use grammers_client::{Client, Config, SignInError, Update};
+use grammers_client::client::{MessageIter, UpdateStream, UpdatesConfiguration};
+use grammers_client::peer::User;
+use grammers_client::tl;
+use grammers_client::{Client, SignInError};
 use grammers_crypto::two_factor_auth::check_p_and_g;
-use grammers_mtsender::ReconnectionPolicy;
-use grammers_session::PackedChat;
+use grammers_mtsender::{SenderPool, SenderPoolRunner};
+use grammers_session::storages::SqliteSession;
+use grammers_session::types::PeerRef;
 use grammers_tl_types::enums::messages::Messages;
 use grammers_tl_types::enums::InputPeer;
 use grammers_tl_types::{Deserializable, Serializable};
@@ -57,11 +57,14 @@ type ChatsMap = HashMap<i64, NativeChat>;
 
 pub struct Backend {
     client: Client,
+    session: Arc<SqliteSession>,
+    updates: Mutex<UpdateStream>,
+    sender_pool_runner: Option<tokio::task::JoinHandle<()>>,
     user: Option<User>,
-    login_token: Option<LoginToken>,
+    login_token: Option<grammers_client::client::LoginToken>,
     login_state: Option<LoginState>,
-    password_token: Option<PasswordToken>,
-    seen_packed_chats_map: HashMap<i64, PackedChat>,
+    password_token: Option<grammers_client::client::PasswordToken>,
+    seen_packed_chats_map: HashMap<i64, PeerRef>,
     chats_map: HashMap<i64, NativeChat>,
     cache_seen_chat_callback: Option<CacheSeenChatCallback>,
     load_chats_callback: Option<LoadChatsCallback>,
@@ -73,6 +76,7 @@ pub struct Backend {
     global_semaphore: Semaphore,
 }
 
+#[allow(static_mut_refs)]
 static mut INSTANCE: OnceCell<Backend> = OnceCell::const_new();
 // static mut INSTANCE: Option<Backend> = None;
 // static INSTANCE: LazyLock<Mutex<Backend>> = LazyLock::new(|| {
@@ -83,6 +87,7 @@ static mut INSTANCE: OnceCell<Backend> = OnceCell::const_new();
 // });
 
 impl Backend {
+    #[allow(static_mut_refs)]
     async fn init() -> &'static Backend {
         unsafe {
             INSTANCE
@@ -91,6 +96,7 @@ impl Backend {
         }
     }
 
+    #[allow(static_mut_refs)]
     pub async fn get_instance() -> &'static mut Backend {
         unsafe {
             if !INSTANCE.initialized() {
@@ -135,7 +141,6 @@ impl Backend {
         info!("Constructing Telegram backend...");
 
         let api_id = TELEGRAM_API_ID.parse()?;
-        let api_hash = TELEGRAM_API_HASH.to_string();
         info!("Connecting to Telegram...");
         // let session = unsafe {
         //     use std::io::Write;
@@ -143,22 +148,30 @@ impl Backend {
         //     let file = File::open(SESSION_FILE)?;
         //     Session::load(memmap2::MmapOptions::new().map(&file)?.as_ref())?
         // };
-        let client = Client::connect(Config {
-            session: Session::load_file_or_create(SESSION_FILE)?,
-            // session,
-            api_id,
-            api_hash: api_hash.clone(),
-            params: InitParams {
+        let session = Arc::new(SqliteSession::open(SESSION_FILE).await?);
+        let SenderPool {
+            runner,
+            updates,
+            handle,
+        } = SenderPool::new(Arc::clone(&session), api_id);
+        let client = Client::new(handle);
+        let sender_pool_runner = tokio::spawn(runner.run());
+        let updates = client
+            .stream_updates(
+                updates,
+                UpdatesConfiguration {
                 catch_up: true,
-                reconnection_policy: &HomoReconnectPolicy,
                 ..Default::default()
-            },
-        })
-        .await?;
+                },
+            )
+            .await;
         info!("Connected!");
 
         Ok(Self {
             client,
+            session,
+            updates: Mutex::new(updates),
+            sender_pool_runner: Some(sender_pool_runner),
             user: None,
             chats_map: HashMap::default(),
             login_token: None,
@@ -180,30 +193,12 @@ impl Backend {
         debug!("save_session Saving session...");
         let _guard = self.save_session_mutex.lock().await;
         debug!("save_session Session save mutex acquired!");
-        match self.client.session().save_to_file(SESSION_FILE) {
-            Ok(_) => {
-                debug!("save_session Session saved to {}", SESSION_FILE);
-            }
-            Err(e) => {
-                error!("save_session failed to save the session to {SESSION_FILE}: {e}");
-                // error!("failed to save the session: {e}. Logging out...");
-                // if self.is_logged_in().await {
-                //     for _ in 0..SIGN_OUT_RETRIES {
-                //         if self.sign_out().await {
-                //             return Err(anyhow::anyhow!(
-                //                 "Failed to save the session and sign out!"
-                //             ));
-                //         }
-                //     }
-                //     panic!("Failed to save the session and sign out!"); // TODO: handle this better
-                // }
-            }
-        }
+        debug!("save_session SqliteSession persists changes automatically");
     }
 
     pub async fn register_device(&self, token: String) -> Result<bool> {
         debug!("Registering device...");
-        use grammers_client::grammers_tl_types::functions::account::RegisterDevice;
+        use grammers_client::tl::functions::account::RegisterDevice;
         let request = RegisterDevice {
             no_muted: false,
             token_type: 13, // Huawei Push, https://core.telegram.org/api/push-updates#subscribing-to-notifications
@@ -307,11 +302,6 @@ impl Backend {
         self.chats_map.insert(chat.chat_id, chat.clone());
     }
 
-    #[inline]
-    fn insert_seen_packed_chat(&mut self, seen_packed_chat: &PackedChat) {
-        self.seen_packed_chats_map
-            .insert(seen_packed_chat.id, *seen_packed_chat);
-    }
 }
 
 impl Drop for Backend {
