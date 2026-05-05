@@ -1,3 +1,4 @@
+use crate::tg::types::NativeProfilePhotoPathAndCount;
 use crate::tg::BASE_PATH;
 use const_format::concatcp;
 use napi_derive_ohos::napi;
@@ -11,7 +12,7 @@ pub fn get_download_dir(chat_id: i64) -> String {
     format!("{}/{}/", MEDIAS_DIR, chat_id)
 }
 
-/// 根据 MIME 类型推断文件扩展名
+/// Infer a file extension from a MIME type.
 pub fn get_extension_from_mime(mime_type: Option<&str>) -> &'static str {
     match mime_type {
         Some("image/jpeg") | Some("image/jpg") => "jpg",
@@ -30,59 +31,77 @@ pub fn get_extension_from_mime(mime_type: Option<&str>) -> &'static str {
         Some("application/x-tgsticker") => "tgs",
         Some("application/zip") => "zip",
         Some("application/x-rar-compressed") => "rar",
-        Some(mime) if mime.starts_with("video/") => "mp4",  // 默认视频
-        Some(mime) if mime.starts_with("audio/") => "mp3",  // 默认音频
-        Some(mime) if mime.starts_with("image/") => "jpg",  // 默认图片
-        _ => "bin",  // 未知类型
+        Some(mime) if mime.starts_with("video/") => "mp4",
+        Some(mime) if mime.starts_with("audio/") => "mp3",
+        Some(mime) if mime.starts_with("image/") => "jpg",
+        _ => "bin",
     }
 }
 
-/// 从文件名中提取扩展名
+/// Extract a plausible extension from a file name.
 pub fn get_extension_from_filename(filename: &str) -> Option<&str> {
-    filename.rsplit('.').next().filter(|ext| !ext.is_empty() && ext.len() < 10)
+    filename
+        .rsplit('.')
+        .next()
+        .filter(|ext| !ext.is_empty() && ext.len() < 10)
 }
 
-/// 根据媒体信息构建下载路径（带正确扩展名）
+/// Build a download path with an extension matching the media metadata.
 pub fn get_media_path_with_extension(
-    chat_id: i64, 
-    message_id: i32, 
+    chat_id: i64,
+    message_id: i32,
     mime_type: Option<&str>,
-    file_name: Option<&str>
+    file_name: Option<&str>,
 ) -> String {
-    // 优先使用文件名中的扩展名
+    // Prefer the extension Telegram supplied in the original file name.
     let extension = if let Some(fname) = file_name {
         get_extension_from_filename(fname).unwrap_or_else(|| get_extension_from_mime(mime_type))
     } else {
         get_extension_from_mime(mime_type)
     };
-    
+
     format!("{}/{}/{}.{}", MEDIAS_DIR, chat_id, message_id, extension)
 }
 
-/// 旧的硬编码路径函数（保留以兼容性）
+/// Legacy hard-coded path helper kept for compatibility.
 #[deprecated(note = "Use get_media_path_with_extension instead")]
 pub fn get_media_path(chat_id: i64, message_id: i32) -> String {
     format!("{}/{}/{}.jpg", MEDIAS_DIR, chat_id, message_id)
 }
 
-pub fn get_sticker_path(chat_id: i64, message_id: i32, is_animated: bool, is_video: bool) -> String {
+pub fn get_sticker_path(
+    chat_id: i64,
+    message_id: i32,
+    is_animated: bool,
+    is_video: bool,
+) -> String {
     let extension = if is_video {
         "webm"
     } else if is_animated {
         "tgs"
     } else {
-        "webp"  // 静态 sticker 通常是 webp
+        "webp"
     };
     format!("{}/{}/{}.{}", MEDIAS_DIR, chat_id, message_id, extension)
 }
 
 #[derive(Debug)]
-#[napi]
 pub struct ProfilePhotoPath {
     pub dir: String,
     pub current: Option<String>,
     pub next: String,
     pub count: i32,
+}
+
+impl From<ProfilePhotoPath> for NativeProfilePhotoPathAndCount {
+    fn from(path: ProfilePhotoPath) -> Self {
+        Self {
+            dir: path.dir,
+            current: path.current,
+            next: path.next,
+            count: path.count,
+        }
+    }
 }
 
 /// Get the path of the profile photo of a chat.
@@ -93,13 +112,17 @@ pub struct ProfilePhotoPath {
 /// * `current` - if true, return the path of the current profile photo,
 /// otherwise return the path of the next profile photo.
 #[napi]
-pub fn get_profile_photo_path_and_count(chat_id: i64) -> Result<ProfilePhotoPath> {
+pub fn get_profile_photo_path_and_count(chat_id: i64) -> Result<NativeProfilePhotoPathAndCount> {
+    profile_photo_path_and_count(chat_id).map(Into::into)
+}
+
+pub fn profile_photo_path_and_count(chat_id: i64) -> Result<ProfilePhotoPath> {
     let dir = format!("{}/{}/{}", MEDIAS_DIR, chat_id, "profile_photos/");
     std::fs::create_dir_all(&dir)?;
-    // check the count of current profile photos
+    // Count the profile photos already cached for this chat.
     let n_profile_photos = std::fs::read_dir(&dir)?.count();
 
-    // we let the first profile photo be 1.jpg
+    // The first profile photo is stored as 1.jpg.
     Ok(ProfilePhotoPath {
         dir: dir.clone(),
         current: if n_profile_photos == 0 {

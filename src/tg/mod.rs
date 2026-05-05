@@ -70,6 +70,10 @@ pub struct Backend {
     load_chats_callback: Option<LoadChatsCallback>,
     update_chat_callback: Option<UpdateChatCallback>,
     incoming_message_callback: Option<IncomingMessageCallback>,
+    event_callback: Mutex<Option<NativeEventCallback>>,
+    events: Mutex<VecDeque<NativeEvent>>,
+    event_replay_limit: Mutex<usize>,
+    next_event_seq: Mutex<i64>,
     run_handler: Mutex<Option<tokio::task::JoinHandle<Result<()>>>>,
     profile_photo_downloading_set: HashSet<i64>,
     save_session_mutex: Mutex<()>,
@@ -160,8 +164,8 @@ impl Backend {
             .stream_updates(
                 updates,
                 UpdatesConfiguration {
-                catch_up: true,
-                ..Default::default()
+                    catch_up: true,
+                    ..Default::default()
                 },
             )
             .await;
@@ -181,6 +185,10 @@ impl Backend {
             load_chats_callback: None,
             update_chat_callback: None,
             incoming_message_callback: None,
+            event_callback: Mutex::new(None),
+            events: Mutex::new(VecDeque::new()),
+            event_replay_limit: Mutex::new(256),
+            next_event_seq: Mutex::new(0),
             run_handler: Mutex::new(None),
             profile_photo_downloading_set: HashSet::default(),
             seen_packed_chats_map: HashMap::default(),
@@ -236,6 +244,53 @@ impl Backend {
         self.incoming_message_callback.replace(cb);
     }
 
+    pub async fn set_event_replay_limit(&self, limit: Option<u32>) {
+        *self.event_replay_limit.lock().await = limit.unwrap_or(256).max(1) as usize;
+    }
+
+    pub async fn register_event_callback(&self, cb: NativeEventCallback) {
+        self.event_callback.lock().await.replace(cb);
+    }
+
+    pub async fn emit_event(&self, mut event: NativeEvent) {
+        let mut next_event_seq = self.next_event_seq.lock().await;
+        *next_event_seq += 1;
+        event.seq = *next_event_seq;
+        drop(next_event_seq);
+
+        let replay_limit = *self.event_replay_limit.lock().await;
+        let mut events = self.events.lock().await;
+        events.push_back(event.clone());
+        while events.len() > replay_limit {
+            events.pop_front();
+        }
+        drop(events);
+
+        if let Some(callback) = self.event_callback.lock().await.as_ref() {
+            callback.call(Ok(event), ThreadsafeFunctionCallMode::NonBlocking);
+        }
+    }
+
+    pub async fn events_since(&self, seq: i64, limit: u32) -> Vec<NativeEvent> {
+        let max_count = limit.max(1) as usize;
+        self.events
+            .lock()
+            .await
+            .iter()
+            .filter(|event| event.seq > seq)
+            .take(max_count)
+            .cloned()
+            .collect()
+    }
+
+    pub async fn runtime_state(&self) -> NativeRuntimeState {
+        NativeRuntimeState {
+            authorized: self.is_logged_in().await,
+            running: self.is_run_handler_active().await,
+            last_event_seq: *self.next_event_seq.lock().await,
+        }
+    }
+
     #[inline]
     pub async fn is_logged_in(&self) -> bool {
         self.client.is_authorized().await.unwrap_or(false)
@@ -257,23 +312,28 @@ impl Backend {
         Ok(NativeSeenChat::from_user(&self.client.get_me().await?))
     }
 
-    /// 注册设备以接收推送通知
+    #[inline]
+    pub async fn get_me_peer(&self) -> Result<NativePeer> {
+        Ok(NativePeer::from_user(&self.client.get_me().await?))
+    }
+
+    /// Register this device to receive push notifications.
     ///
-    /// 参数:
-    /// - `token`: 设备推送令牌 (Simple push 类型)
+    /// Parameters:
+    /// - `token`: device push token for the Simple push provider.
     ///
-    /// 返回值:
-    /// - `Result<bool>`: 注册成功返回 true，失败返回 false
+    /// Returns:
+    /// - `"OK"` when registration succeeds, otherwise the Telegram error text.
     #[inline]
     pub async fn register_push(&self, token_type: i32, token: String) -> String {
         debug!("Registering push device with Simple push...");
         let request = tl::functions::account::RegisterDevice {
-            no_muted: true, // 不静音，接收所有通知
+            no_muted: true, // Keep notifications unmuted for all chats.
             token_type,
-            token,              // 设备推送令牌
-            app_sandbox: false, // 使用生产环境证书
-            secret: vec![],     // 不需要加密密钥
-            other_uids: vec![], // 其他用户ID列表（可选）
+            token,              // Device push token.
+            app_sandbox: false, // Use the production certificate.
+            secret: vec![],     // No encryption key is required.
+            other_uids: vec![], // Optional additional user IDs.
         };
 
         match self.client.invoke(&request).await {
@@ -287,8 +347,8 @@ impl Backend {
         debug!("Unregistering push device with Simple push...");
         let request = tl::functions::account::UnregisterDevice {
             token_type,
-            token,              // 设备推送令牌
-            other_uids: vec![], // 其他用户ID列表（可选）
+            token,              // Device push token.
+            other_uids: vec![], // Optional additional user IDs.
         };
 
         match self.client.invoke(&request).await {
@@ -302,6 +362,14 @@ impl Backend {
         self.chats_map.insert(chat.chat_id, chat.clone());
     }
 
+    pub(crate) fn cached_peer_ref(&self, chat_id: i64) -> Result<PeerRef> {
+        self.seen_packed_chats_map
+            .get(&chat_id)
+            .map(|peer| *peer)
+            .ok_or_else(|| {
+                anyhow::anyhow!("Chat with id {chat_id} is not in the native peer cache")
+            })
+    }
 }
 
 impl Drop for Backend {

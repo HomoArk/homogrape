@@ -13,11 +13,13 @@ pub type LoadChatsCallback = ThreadsafeFunction<(), Promise<()>>;
 pub type CacheSeenChatCallback = ThreadsafeFunction<NativeSeenChat, Promise<()>>;
 pub type UpdateChatCallback =
     ThreadsafeFunction<FnArgs<(NativeSeenChat, NativeChat, Vec<NativeMessage>)>, Promise<()>>;
-pub type IncomingMessageCallback = ThreadsafeFunction<FnArgs<(Option<NativeChat>, NativeMessage)>, Promise<()>>;
+pub type IncomingMessageCallback =
+    ThreadsafeFunction<FnArgs<(Option<NativeChat>, NativeMessage)>, Promise<()>>;
+pub type NativeEventCallback = ThreadsafeFunction<NativeEvent, Promise<()>>;
 
 // (media_index, current_progress): void => {}
 pub type UpdateUploadProgressCallback = ThreadsafeFunction<FnArgs<(i64, i64)>, Promise<()>>;
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[napi]
 pub enum LoginState {
     WrongPhoneNumber,
@@ -27,6 +29,13 @@ pub enum LoginState {
     WrongPassword,
     LoggedIn,
     LoginFailure,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeAuthState {
+    pub login_state: LoginState,
+    pub authorized: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,6 +73,14 @@ impl From<Option<Media>> for MediaType {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi]
+pub enum NativeSendState {
+    Pending,
+    Sent,
+    Failed,
+}
+
 pub fn peer_ref_to_string(peer_ref: PeerRef) -> String {
     format!(
         "{}:{}",
@@ -98,66 +115,66 @@ pub fn peer_ref_from_string(value: &str) -> std::result::Result<PeerRef, anyhow:
     })
 }
 
-/// 消息格式化实体类型
+/// Rich-text entity type used by Telegram messages.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[napi]
 pub enum MessageEntityType {
     Unknown,
-    Mention,     // @username
-    Hashtag,     // #hashtag
-    BotCommand,  // /command
-    Url,         // https://...
-    Email,       // email@example.com
-    Bold,        // **bold**
-    Italic,      // *italic*
-    Code,        // `code`
-    Pre,         // ```pre```
-    TextUrl,     // [text](url)
-    MentionName, // 文本提及用户
-    Phone,       // 电话号码
-    Cashtag,     // $USD
-    Underline,   // 下划线
-    Strike,      // 删除线
-    Spoiler,     // 剧透文本
-    CustomEmoji, // 自定义表情
-    Blockquote,  // 引用块
+    Mention,
+    Hashtag,
+    BotCommand,
+    Url, // https://...
+    Email,
+    Bold,
+    Italic,
+    Code,
+    Pre,
+    TextUrl, // [text](url)
+    MentionName,
+    Phone,
+    Cashtag, // $USD
+    Underline,
+    Strike,
+    Spoiler,
+    CustomEmoji,
+    Blockquote,
 }
 
-/// Sticker 信息
+/// Sticker metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[napi(object)]
 pub struct StickerInfo {
-    /// 关联的 emoji (来自 alt 字段)
+    /// Associated emoji from Telegram's alt field.
     pub emoji: Option<String>,
-    /// 是否为动画 sticker (TGS 格式)
+    /// Whether this sticker is animated in TGS/Lottie format.
     pub is_animated: bool,
-    /// 是否为视频 sticker (WEBM 格式)
+    /// Whether this sticker is a WEBM video sticker.
     pub is_video: bool,
-    /// MIME 类型
+    /// MIME type.
     pub mime_type: Option<String>,
-    /// 文件大小
+    /// File size in bytes.
     pub file_size: Option<i64>,
-    /// 宽度
+    /// Pixel width.
     pub width: Option<i32>,
-    /// 高度
+    /// Pixel height.
     pub height: Option<i32>,
 }
 
-/// 通用媒体信息（Photo、Document、Video 等）
+/// Generic media metadata for photos, documents, videos, and similar payloads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[napi(object)]
 pub struct MediaInfo {
-    /// MIME 类型 (image/jpeg, video/mp4, application/pdf, etc.)
+    /// MIME type, such as image/jpeg, video/mp4, or application/pdf.
     pub mime_type: Option<String>,
-    /// 原始文件名（如果有）
+    /// Original file name when Telegram provides one.
     pub file_name: Option<String>,
-    /// 文件大小（字节）
+    /// File size in bytes.
     pub file_size: Option<i64>,
-    /// 宽度（图片/视频）
+    /// Pixel width for image and video media.
     pub width: Option<i32>,
-    /// 高度（图片/视频）
+    /// Pixel height for image and video media.
     pub height: Option<i32>,
-    /// 时长（视频/音频，秒）
+    /// Duration in seconds for video and audio media.
     pub duration: Option<i32>,
 }
 
@@ -189,17 +206,17 @@ impl From<&tl::enums::MessageEntity> for MessageEntityType {
     }
 }
 
-/// 消息格式化实体
+/// Rich-text entity span in a Telegram message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[napi(object)]
 pub struct NativeMessageEntity {
     pub entity_type: MessageEntityType,
-    pub offset: i32,                  // UTF-16 偏移量
-    pub length: i32,                  // UTF-16 长度
-    pub url: Option<String>,          // TextUrl 的链接
-    pub user_id: Option<i64>,         // MentionName 的用户 ID
-    pub language: Option<String>,     // Pre 的语言
-    pub custom_emoji_id: Option<i64>, // CustomEmoji 的 ID
+    pub offset: i32,
+    pub length: i32,
+    pub url: Option<String>,
+    pub user_id: Option<i64>,
+    pub language: Option<String>,
+    pub custom_emoji_id: Option<i64>,
 }
 
 impl NativeMessageEntity {
@@ -298,12 +315,14 @@ pub struct NativeMessage {
     pub edit_timestamp: Option<i64>,
     pub grouped_id: Option<i64>,
     pub reply_to_message_id: Option<i32>,
-    /// 消息格式化实体（粗体、斜体、链接等）
+    /// Rich-text entities such as bold, italic, and links.
     pub fmt_entities: Option<Vec<NativeMessageEntity>>,
-    /// Sticker 信息
+    /// Sticker metadata.
     pub sticker_info: Option<StickerInfo>,
-    /// 通用媒体信息（Photo/Document/Video 等）
+    /// Generic media metadata for photos, documents, videos, and similar payloads.
     pub media_info: Option<MediaInfo>,
+    pub deleted: bool,
+    pub send_state: NativeSendState,
 }
 
 impl NativeMessage {
@@ -314,23 +333,23 @@ impl NativeMessage {
             sender_id = raw.sender().unwrap().id().bare_id();
             sender_name = raw.sender().unwrap().name().unwrap_or("").to_string();
         }
-        
-        // 提取 Sticker 信息
-        let sticker_info =
-            if let Some(Media::Sticker(sticker)) = raw.media() {
-                let document = &sticker.document;
-                let mime = document.mime_type().unwrap_or("");
 
-                // 通过 MIME 类型判断 sticker 类型
-                // application/x-tgsticker 是动画 sticker (TGS/Lottie)
-                // video/webm 是视频 sticker
-                let is_animated = mime == "application/x-tgsticker";
-                let is_video = mime == "video/webm" || mime.starts_with("video/");
+        // Extract sticker metadata.
+        let sticker_info = if let Some(Media::Sticker(sticker)) = raw.media() {
+            let document = &sticker.document;
+            let mime = document.mime_type().unwrap_or("");
 
-                // 从 document.raw 中提取尺寸
-                // document.raw 已经是 MessageMediaDocument 类型
-                let (width, height) = if let Some(tl::enums::Document::Document(doc)) = &document.raw.document {
-                    // 查找 DocumentAttributeImageSize
+            // Classify sticker payloads from their MIME type.
+            // application/x-tgsticker is an animated TGS/Lottie sticker.
+            // video/webm is a video sticker.
+            let is_animated = mime == "application/x-tgsticker";
+            let is_video = mime == "video/webm" || mime.starts_with("video/");
+
+            // Extract dimensions from the raw document payload.
+            // document.raw is already a MessageMediaDocument value.
+            let (width, height) =
+                if let Some(tl::enums::Document::Document(doc)) = &document.raw.document {
+                    // Look for DocumentAttributeImageSize.
                     let mut w = None;
                     let mut h = None;
                     for attr in &doc.attributes {
@@ -347,29 +366,29 @@ impl NativeMessage {
                 } else {
                     (None, None)
                 };
-                
-                Some(StickerInfo {
-                    emoji: Some(sticker.raw_attrs.alt.clone()),
-                    is_animated,
-                    is_video,
-                    mime_type: Some(mime.to_string()),
-                    file_size: document.size().map(|size| size as i64),
-                    width,
-                    height,
-                })
-            } else {
-                None
-            };
-        
-        // 解析格式化实体
+
+            Some(StickerInfo {
+                emoji: Some(sticker.raw_attrs.alt.clone()),
+                is_animated,
+                is_video,
+                mime_type: Some(mime.to_string()),
+                file_size: document.size().map(|size| size as i64),
+                width,
+                height,
+            })
+        } else {
+            None
+        };
+
+        // Parse formatted text entities.
         let fmt_entities: Option<Vec<NativeMessageEntity>> = raw
             .fmt_entities()
             .map(|entities| entities.iter().map(NativeMessageEntity::from_raw).collect());
-        
-        // 提取通用媒体信息
+
+        // Extract generic media metadata.
         let media_info = match raw.media() {
             Some(Media::Photo(_photo)) => {
-                // Photo 类型没有简单的方法获取文件大小，这里不设置
+                // Photo does not expose a simple file-size accessor here.
                 Some(MediaInfo {
                     mime_type: Some("image/jpeg".to_string()),
                     file_name: None,
@@ -381,15 +400,15 @@ impl NativeMessage {
             }
             Some(Media::Document(doc)) => {
                 let mime = doc.mime_type().unwrap_or("application/octet-stream");
-                
-                // 从 attributes 中提取元数据
-                let (file_name, width, height, duration) = 
+
+                // Extract metadata from document attributes.
+                let (file_name, width, height, duration) =
                     if let Some(tl::enums::Document::Document(d)) = &doc.raw.document {
                         let mut fname = None;
                         let mut w = None;
                         let mut h = None;
                         let mut dur = None;
-                        
+
                         for attr in &d.attributes {
                             match attr {
                                 tl::enums::DocumentAttribute::Filename(f) => {
@@ -411,7 +430,7 @@ impl NativeMessage {
                     } else {
                         (None, None, None, None)
                     };
-                
+
                 Some(MediaInfo {
                     mime_type: Some(mime.to_string()),
                     file_name,
@@ -443,6 +462,8 @@ impl NativeMessage {
             fmt_entities,
             sticker_info,
             media_info,
+            deleted: false,
+            send_state: NativeSendState::Sent,
         }
     }
 }
@@ -480,7 +501,7 @@ impl Ord for NativeMessage {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[napi]
 pub enum ChatType {
     User,
@@ -502,13 +523,18 @@ impl ChatType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[napi(object)]
 pub struct NativeChat {
     pub chat_id: i64,
     pub chat_type: ChatType,
     pub name: String,
     pub pinned: bool,
+    pub unread_count: i32,
+    pub read_inbox_max_id: i32,
+    pub read_outbox_max_id: i32,
+    pub muted: bool,
+    pub archived: bool,
     pub last_message_id: i32,
     pub last_message_sender_name: String,
     pub last_message_text: String,
@@ -541,6 +567,11 @@ impl NativeChat {
             chat_type: ChatType::from_chat(raw),
             name: raw.name().unwrap_or("").to_string(),
             pinned: false,
+            unread_count: 0,
+            read_inbox_max_id: 0,
+            read_outbox_max_id: 0,
+            muted: false,
+            archived: false,
             last_message_id: 0,
             last_message_sender_name: "".to_string(),
             last_message_text: "".to_string(),
@@ -556,6 +587,31 @@ impl NativeChat {
         let mut last_message_sender_name = "".to_string();
         let mut last_message_text = "".to_string();
         let mut last_message_timestamp = 0;
+        let (unread_count, read_inbox_max_id, read_outbox_max_id, muted, archived) =
+            match &dialog.raw {
+                tl::enums::Dialog::Dialog(raw) => {
+                    let muted = match &raw.notify_settings {
+                        tl::enums::PeerNotifySettings::Settings(settings) => settings
+                            .mute_until
+                            .map(|until| until as i64 > chrono::Utc::now().timestamp())
+                            .unwrap_or(false),
+                    };
+                    (
+                        raw.unread_count,
+                        raw.read_inbox_max_id,
+                        raw.read_outbox_max_id,
+                        muted,
+                        raw.folder_id == Some(1),
+                    )
+                }
+                tl::enums::Dialog::Folder(raw) => (
+                    raw.unread_muted_messages_count + raw.unread_unmuted_messages_count,
+                    0,
+                    0,
+                    false,
+                    false,
+                ),
+            };
         let megagroup: bool = match chat {
             Peer::User(_) => false,
             Peer::Group(g) => g.is_megagroup(),
@@ -588,6 +644,11 @@ impl NativeChat {
             chat_type: ChatType::from_chat(chat),
             name: chat.name().unwrap_or("").to_string(),
             pinned: dialog.raw.pinned(),
+            unread_count,
+            read_inbox_max_id,
+            read_outbox_max_id,
+            muted,
+            archived,
             last_message_id,
             last_message_sender_name,
             last_message_text,
@@ -598,9 +659,9 @@ impl NativeChat {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[napi(object)]
-pub struct NativeSeenChat {
+pub struct NativePeer {
     pub chat_id: i64,
     pub chat_type: ChatType,
     pub packed_chat: String,
@@ -618,7 +679,7 @@ pub struct NativeSeenChat {
 }
 
 #[napi]
-impl NativeSeenChat {
+impl NativePeer {
     pub fn from_raw(raw: &Peer) -> Self {
         match raw {
             Peer::User(user) => Self::from_user(user),
@@ -693,19 +754,98 @@ impl NativeSeenChat {
     }
 }
 
-/// 参与者角色类型
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeSeenChat {
+    pub chat_id: i64,
+    pub chat_type: ChatType,
+    pub packed_chat: String,
+    pub is_contact: bool,
+    pub is_mutual_contact: bool,
+    pub phone: Option<String>,
+    pub username: Option<String>,
+    pub photo_thumb: Option<Vec<u8>>,
+    pub full_name: String,
+    pub first_name: String,
+    pub last_name: Option<String>,
+    pub bio: Option<String>,
+    pub date_of_birth: Option<i64>,
+    pub forum: bool,
+}
+
+impl From<NativePeer> for NativeSeenChat {
+    fn from(peer: NativePeer) -> Self {
+        Self {
+            chat_id: peer.chat_id,
+            chat_type: peer.chat_type,
+            packed_chat: peer.packed_chat,
+            is_contact: peer.is_contact,
+            is_mutual_contact: peer.is_mutual_contact,
+            phone: peer.phone,
+            username: peer.username,
+            photo_thumb: peer.photo_thumb,
+            full_name: peer.full_name,
+            first_name: peer.first_name,
+            last_name: peer.last_name,
+            bio: peer.bio,
+            date_of_birth: peer.date_of_birth,
+            forum: peer.forum,
+        }
+    }
+}
+
+impl From<NativeSeenChat> for NativePeer {
+    fn from(peer: NativeSeenChat) -> Self {
+        Self {
+            chat_id: peer.chat_id,
+            chat_type: peer.chat_type,
+            packed_chat: peer.packed_chat,
+            is_contact: peer.is_contact,
+            is_mutual_contact: peer.is_mutual_contact,
+            phone: peer.phone,
+            username: peer.username,
+            photo_thumb: peer.photo_thumb,
+            full_name: peer.full_name,
+            first_name: peer.first_name,
+            last_name: peer.last_name,
+            bio: peer.bio,
+            date_of_birth: peer.date_of_birth,
+            forum: peer.forum,
+        }
+    }
+}
+
+impl NativeSeenChat {
+    pub fn from_raw(raw: &Peer) -> Self {
+        NativePeer::from_raw(raw).into()
+    }
+
+    pub fn from_user(raw: &User) -> Self {
+        NativePeer::from_user(raw).into()
+    }
+
+    pub fn from_group(raw: &Group) -> Self {
+        NativePeer::from_group(raw).into()
+    }
+
+    pub fn from_channel(raw: &Channel) -> Self {
+        NativePeer::from_channel(raw).into()
+    }
+}
+
+/// Chat participant role.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[napi]
 pub enum NativeParticipantRole {
-    /// 普通用户
+    /// Regular user.
     User,
-    /// 群组/频道创建者
+    /// Group or channel creator.
     Creator,
-    /// 管理员
+    /// Administrator.
     Admin,
-    /// 被封禁用户
+    /// Banned user.
     Banned,
-    /// 已离开用户
+    /// User who left the chat.
     Left,
 }
 
@@ -722,23 +862,23 @@ impl From<&Role> for NativeParticipantRole {
     }
 }
 
-/// 聊天参与者
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Chat participant.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[napi(object)]
 pub struct NativeParticipant {
-    /// 用户 ID
+    /// User ID.
     pub user_id: i64,
-    /// 用户全名
+    /// Full name.
     pub full_name: String,
-    /// 用户名（可选）
+    /// First name.
     pub first_name: String,
-    /// 用户名（可选）
+    /// Last name.
     pub last_name: Option<String>,
-    /// 用户名 @username（可选）
+    /// Public username without the @ prefix.
     pub username: Option<String>,
-    /// 用户角色
+    /// Participant role.
     pub role: NativeParticipantRole,
-    /// 头像缩略图
+    /// Stripped profile photo thumbnail.
     pub photo_thumb: Option<Vec<u8>>,
 }
 
@@ -755,6 +895,279 @@ impl NativeParticipant {
                 .user
                 .photo()
                 .and_then(|p| p.stripped_thumb.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi]
+pub enum NativeLoadSource {
+    Cache,
+    Network,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi]
+pub enum NativeMessageLoadType {
+    Initial,
+    Backward,
+    Forward,
+    Around,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi]
+pub enum NativeEventKind {
+    RuntimeState,
+    PeerUpserted,
+    DialogUpserted,
+    DialogsLoaded,
+    MessagesUpserted,
+    MessagesLoaded,
+    MessageEdited,
+    MessagesDeleted,
+    ReadStateChanged,
+    UploadProgress,
+    DownloadProgress,
+    ActionFailed,
+    UnknownUpdate,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi]
+pub enum NativeSearchResultKind {
+    Chat,
+    Message,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeRuntimeOptions {
+    pub event_replay_limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeRuntimeState {
+    pub authorized: bool,
+    pub running: bool,
+    pub last_event_seq: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeActionResult {
+    pub ok: bool,
+    pub message: String,
+}
+
+impl NativeActionResult {
+    pub fn ok(message: impl Into<String>) -> Self {
+        Self {
+            ok: true,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeError {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeDialog {
+    pub peer: NativePeer,
+    pub chat: NativeChat,
+    pub top_message: Option<NativeMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeDialogPage {
+    pub dialogs: Vec<NativeDialog>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeDialogLoadRequest {
+    pub folder_id: Option<i32>,
+    pub offset: Option<i64>,
+    pub count: Option<u32>,
+    pub source: Option<NativeLoadSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeDialogLoadResult {
+    pub dialogs: Vec<NativeDialog>,
+    pub messages: Vec<NativeMessage>,
+    pub has_more: bool,
+    pub source: Option<NativeLoadSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeMessagePage {
+    pub chat_id: i64,
+    pub messages: Vec<NativeMessage>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeMessageLoadRequest {
+    pub chat_id: i64,
+    pub thread_id: Option<i32>,
+    pub count: Option<u32>,
+    pub max_id: Option<i32>,
+    pub offset_date: Option<i64>,
+    pub load_type: Option<NativeMessageLoadType>,
+    pub source: Option<NativeLoadSource>,
+    pub last_message_id: Option<i32>,
+    pub first_unread_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeMessageLoadResult {
+    pub chat_id: i64,
+    pub chat: Option<NativeChat>,
+    pub messages: Vec<NativeMessage>,
+    pub has_more: bool,
+    pub source: Option<NativeLoadSource>,
+    pub load_type: Option<NativeMessageLoadType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeMediaInput {
+    pub path: String,
+    pub media_type: MediaType,
+    pub caption: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeSendRequest {
+    pub chat_id: i64,
+    pub text: String,
+    pub reply_to_message_id: Option<i32>,
+    pub medias: Option<Vec<NativeMediaInput>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeSendResult {
+    pub messages: Vec<NativeMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeMediaResult {
+    pub local_path: String,
+    pub media_type: MediaType,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeProfilePhotoPathAndCount {
+    pub dir: String,
+    pub current: Option<String>,
+    pub next: String,
+    pub count: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeSearchResult {
+    pub kind: NativeSearchResultKind,
+    pub chat: Option<NativeChat>,
+    pub peer: Option<NativePeer>,
+    pub seen_chat: Option<NativePeer>,
+    pub message: Option<NativeMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeSearchPage {
+    pub results: Vec<NativeSearchResult>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeDeletedMessages {
+    pub chat_id: Option<i64>,
+    pub message_ids: Vec<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeReadState {
+    pub chat_id: i64,
+    pub max_id: i32,
+    pub unread_count: i32,
+    pub inbox: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeProgress {
+    pub chat_id: Option<i64>,
+    pub message_id: Option<i32>,
+    pub media_index: Option<i32>,
+    pub current_progress: i32,
+    pub total: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeDialogFlags {
+    pub pinned: Option<bool>,
+    pub muted: Option<bool>,
+    pub archived: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[napi(object)]
+pub struct NativeEvent {
+    pub seq: i64,
+    pub kind: NativeEventKind,
+    pub timestamp: i64,
+    pub peer: Option<NativePeer>,
+    pub chat: Option<NativeChat>,
+    pub dialogs: Option<Vec<NativeDialog>>,
+    pub messages: Option<Vec<NativeMessage>>,
+    pub message: Option<NativeMessage>,
+    pub deleted_messages: Option<NativeDeletedMessages>,
+    pub read_state: Option<NativeReadState>,
+    pub progress: Option<NativeProgress>,
+    pub source: Option<NativeLoadSource>,
+    pub load_type: Option<NativeMessageLoadType>,
+    pub error: Option<NativeError>,
+}
+
+impl NativeEvent {
+    pub fn new(kind: NativeEventKind) -> Self {
+        Self {
+            seq: 0,
+            kind,
+            timestamp: chrono::Utc::now().timestamp(),
+            peer: None,
+            chat: None,
+            dialogs: None,
+            messages: None,
+            message: None,
+            deleted_messages: None,
+            read_state: None,
+            progress: None,
+            source: None,
+            load_type: None,
+            error: None,
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::tg::types::{NativeChat, NativeMessage, NativeSeenChat};
+use crate::tg::types::{NativeDeletedMessages, NativeEvent, NativeEventKind, NativeMessage};
 use crate::tg::utils::get_profile_photo_path_and_count;
 use crate::tg::{Backend, SESSION_FILE};
 use anyhow::Result;
@@ -18,7 +18,25 @@ impl Backend {
                 Update::NewMessage(ref raw_message) => {
                     self.incoming_message_handler(raw_message).await;
                 }
-                _ => info!("Other update are not implemented currently."),
+                Update::MessageEdited(ref raw_message) => {
+                    let message = NativeMessage::from_raw(raw_message);
+                    let mut event = NativeEvent::new(NativeEventKind::MessageEdited);
+                    event.message = Some(message);
+                    self.emit_event(event).await;
+                }
+                Update::MessageDeleted(ref deleted) => {
+                    let mut event = NativeEvent::new(NativeEventKind::MessagesDeleted);
+                    event.deleted_messages = Some(NativeDeletedMessages {
+                        chat_id: deleted.channel_id(),
+                        message_ids: deleted.messages().to_vec(),
+                    });
+                    self.emit_event(event).await;
+                }
+                _ => {
+                    let event = NativeEvent::new(NativeEventKind::UnknownUpdate);
+                    self.emit_event(event).await;
+                    info!("Update type is not implemented yet.");
+                }
             }
             tokio::spawn(self.save_session());
         }

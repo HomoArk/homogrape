@@ -1,5 +1,8 @@
 use crate::tg::types::{
-    MediaType, NativeChat, NativeMessage, NativeSeenChat, UpdateUploadProgressCallback,
+    MediaType, NativeActionResult, NativeChat, NativeDeletedMessages, NativeEvent, NativeEventKind,
+    NativeLoadSource, NativeMessage, NativeMessageLoadRequest, NativeMessageLoadResult,
+    NativeMessageLoadType, NativePeer, NativeProgress, NativeReadState, NativeSearchPage,
+    NativeSearchResult, NativeSearchResultKind, NativeSeenChat, UpdateUploadProgressCallback,
 };
 use crate::tg::utils::{
     get_download_dir, get_media_path_with_extension, get_profile_photo_path_and_count,
@@ -12,28 +15,44 @@ use grammers_client::message::{InputMessage, Message};
 use grammers_client::peer::Peer;
 use grammers_client::tl;
 use log::{debug, error};
+use napi_ohos::bindgen_prelude::FnArgs;
 use napi_ohos::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_ohos::tokio;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use napi_ohos::bindgen_prelude::FnArgs;
 
 impl Backend {
     pub(crate) async fn incoming_message_handler(&'static self, raw_message: &Message) {
-        self.seen_packed_chats_map
-            .insert(raw_message.peer_id().bare_id(), raw_message.peer_ref().await.unwrap());
-        self.cache_seen_chat_callback.as_ref().unwrap().call(
-            Ok(NativeSeenChat::from_raw(raw_message.peer().unwrap())),
-            ThreadsafeFunctionCallMode::NonBlocking,
+        self.seen_packed_chats_map.insert(
+            raw_message.peer_id().bare_id(),
+            raw_message.peer_ref().await.unwrap(),
         );
+        let peer = raw_message.peer().map(NativePeer::from_raw);
+        if let Some(peer) = peer.clone() {
+            if let Some(callback) = &self.cache_seen_chat_callback {
+                callback.call(
+                    Ok(NativeSeenChat::from(peer.clone())),
+                    ThreadsafeFunctionCallMode::NonBlocking,
+                );
+            }
+            let mut event = NativeEvent::new(NativeEventKind::PeerUpserted);
+            event.peer = Some(peer);
+            self.emit_event(event).await;
+        }
 
         if let Some(sender) = raw_message.sender() {
             self.seen_packed_chats_map
                 .insert(sender.id().bare_id(), sender.to_ref().await.unwrap());
-            self.cache_seen_chat_callback.as_ref().unwrap().call(
-                Ok(NativeSeenChat::from_raw(&sender)),
-                ThreadsafeFunctionCallMode::NonBlocking,
-            );
+            let sender_peer = NativePeer::from_raw(&sender);
+            if let Some(callback) = &self.cache_seen_chat_callback {
+                callback.call(
+                    Ok(NativeSeenChat::from(sender_peer.clone())),
+                    ThreadsafeFunctionCallMode::NonBlocking,
+                );
+            }
+            let mut event = NativeEvent::new(NativeEventKind::PeerUpserted);
+            event.peer = Some(sender_peer);
+            self.emit_event(event).await;
         }
 
         tokio::spawn(self.download_sender_chat_photo(raw_message.sender().cloned()));
@@ -52,10 +71,15 @@ impl Backend {
                 old_chat.last_message_timestamp = raw_message.date().timestamp();
                 debug!("tg::Backend::run() old_chat: {:?}", old_chat);
                 drop(old_chat);
-                self.incoming_message_callback
-                    .as_ref()
-                    .unwrap()
-                    .call(Ok(FnArgs::from((None, message))), ThreadsafeFunctionCallMode::NonBlocking);
+                if let Some(callback) = &self.incoming_message_callback {
+                    callback.call(
+                        Ok(FnArgs::from((None, message.clone()))),
+                        ThreadsafeFunctionCallMode::NonBlocking,
+                    );
+                }
+                let mut event = NativeEvent::new(NativeEventKind::MessagesUpserted);
+                event.messages = Some(vec![message]);
+                self.emit_event(event).await;
             }
             None => {
                 drop(old_chat);
@@ -78,13 +102,17 @@ impl Backend {
                 debug!("Message: {:?}", message);
                 self.chats_map.insert(raw_chat.id().bare_id(), chat.clone());
                 debug!("chats_map updated!");
-                self.incoming_message_callback
-                    .as_ref()
-                    .expect("incoming_message_callback is None")
-                    .call(
-                        Ok(FnArgs::from((Some(chat), message))),
+                if let Some(callback) = &self.incoming_message_callback {
+                    callback.call(
+                        Ok(FnArgs::from((Some(chat.clone()), message.clone()))),
                         ThreadsafeFunctionCallMode::NonBlocking,
                     );
+                }
+                let mut event = NativeEvent::new(NativeEventKind::MessagesUpserted);
+                event.peer = peer;
+                event.chat = Some(chat);
+                event.messages = Some(vec![message]);
+                self.emit_event(event).await;
             }
         };
         debug!("Incoming message callback called!");
@@ -147,7 +175,7 @@ impl Backend {
         }
 
         while let Some(raw_message) = message_iter.next().await? {
-            // 缓存发送者信息
+            // Cache sender metadata as messages are loaded.
             if let Some(sender) = raw_message.sender() {
                 self.seen_packed_chats_map
                     .insert(sender.id().bare_id(), sender.to_ref().await.unwrap());
@@ -161,7 +189,7 @@ impl Backend {
             messages.push(NativeMessage::from_raw(&raw_message));
         }
 
-        // 按消息 ID 升序排序（从旧到新）
+        // Sort by message ID from oldest to newest.
         messages.sort_by_key(|m| m.message_id);
 
         debug!(
@@ -172,10 +200,43 @@ impl Backend {
         Ok(messages)
     }
 
-    pub(crate) async fn get_sorted_messages(
+    pub async fn load_messages_page(
         &self,
-        chat: &Peer,
-    ) -> Result<Vec<NativeMessage>> {
+        request: NativeMessageLoadRequest,
+    ) -> Result<NativeMessageLoadResult> {
+        let before_message_id = request.max_id.or(request.last_message_id);
+        let count = request.count.unwrap_or(50).clamp(1, 100);
+        let messages = self
+            .load_history_messages(request.chat_id, before_message_id, Some(count))
+            .await?;
+        let has_more = messages.len() >= count as usize;
+        let chat = self
+            .chats_map
+            .get(&request.chat_id)
+            .map(|chat| chat.clone());
+        let source = request.source.or(Some(NativeLoadSource::Network));
+        let load_type = request.load_type.or(Some(NativeMessageLoadType::Backward));
+
+        let result = NativeMessageLoadResult {
+            chat_id: request.chat_id,
+            chat,
+            messages,
+            has_more,
+            source,
+            load_type,
+        };
+
+        let mut event = NativeEvent::new(NativeEventKind::MessagesLoaded);
+        event.chat = result.chat.clone();
+        event.messages = Some(result.messages.clone());
+        event.source = result.source.clone();
+        event.load_type = result.load_type.clone();
+        self.emit_event(event).await;
+
+        Ok(result)
+    }
+
+    pub(crate) async fn get_sorted_messages(&self, chat: &Peer) -> Result<Vec<NativeMessage>> {
         let mut sorted_messages: Vec<NativeMessage> = Vec::new();
         let peer_ref = chat.to_ref().await.unwrap();
         let mut messages = self.client.iter_messages(peer_ref).limit(5);
@@ -192,7 +253,7 @@ impl Backend {
         text: String,
         reply_to: Option<i32>,
         medias: Option<Vec<String>>,
-        update_upload_progress_callback: Arc<UpdateUploadProgressCallback>,
+        update_upload_progress_callback: Option<Arc<UpdateUploadProgressCallback>>,
     ) -> Result<Vec<NativeMessage>> {
         debug!("Sending message to chat {}: {}", chat_id, text);
         // let chats_map = self.chats_map.read().await;
@@ -213,10 +274,21 @@ impl Backend {
                 let raw_file = std::fs::read(media)?;
                 let len = raw_file.len();
                 let mut stream = std::io::Cursor::new(raw_file);
-                update_upload_progress_callback.call(
-                    Ok(FnArgs::from((index as i64, 0))),
-                    ThreadsafeFunctionCallMode::NonBlocking,
-                );
+                if let Some(callback) = update_upload_progress_callback.as_ref() {
+                    callback.call(
+                        Ok(FnArgs::from((index as i64, 0))),
+                        ThreadsafeFunctionCallMode::NonBlocking,
+                    );
+                }
+                let mut progress_event = NativeEvent::new(NativeEventKind::UploadProgress);
+                progress_event.progress = Some(NativeProgress {
+                    chat_id: Some(chat_id),
+                    message_id: None,
+                    media_index: Some(index as i32),
+                    current_progress: 0,
+                    total: Some(100),
+                });
+                self.emit_event(progress_event).await;
                 let file_name = std::path::Path::new(media)
                     .file_name()
                     .unwrap()
@@ -231,10 +303,21 @@ impl Backend {
                     .await;
                 match uploaded_file {
                     Ok(file) => {
-                        update_upload_progress_callback.call(
-                            Ok(FnArgs::from((index as i64, 100))),
-                            ThreadsafeFunctionCallMode::NonBlocking,
-                        );
+                        if let Some(callback) = update_upload_progress_callback.as_ref() {
+                            callback.call(
+                                Ok(FnArgs::from((index as i64, 100))),
+                                ThreadsafeFunctionCallMode::NonBlocking,
+                            );
+                        }
+                        let mut progress_event = NativeEvent::new(NativeEventKind::UploadProgress);
+                        progress_event.progress = Some(NativeProgress {
+                            chat_id: Some(chat_id),
+                            message_id: None,
+                            media_index: Some(index as i32),
+                            current_progress: 100,
+                            total: Some(100),
+                        });
+                        self.emit_event(progress_event).await;
                         let input_media = if index == 0 {
                             InputMedia::new().caption(text.clone())
                         } else {
@@ -303,6 +386,143 @@ impl Backend {
             .collect::<Vec<_>>())
     }
 
+    pub async fn search_messages_page(
+        &self,
+        chat_id: Option<i64>,
+        query: String,
+        offset_id: Option<i32>,
+        limit: Option<u32>,
+    ) -> Result<NativeSearchPage> {
+        let max_count = limit.unwrap_or(20).clamp(1, 100) as usize;
+        let mut results = Vec::new();
+
+        if let Some(chat_id) = chat_id {
+            let peer_ref = self.cached_peer_ref(chat_id)?;
+            let mut iter = self
+                .client
+                .search_messages(peer_ref)
+                .query(&query)
+                .limit(max_count + 1);
+            if let Some(offset_id) = offset_id {
+                iter = iter.offset_id(offset_id);
+            }
+            while let Some(message) = iter.next().await? {
+                let native_message = NativeMessage::from_raw(&message);
+                let peer = message.peer().map(|peer| NativePeer::from_raw(&peer));
+                let chat = self
+                    .chats_map
+                    .get(&native_message.chat_id)
+                    .map(|chat| chat.clone());
+                results.push(NativeSearchResult {
+                    kind: NativeSearchResultKind::Message,
+                    chat,
+                    peer: peer.clone(),
+                    seen_chat: peer,
+                    message: Some(native_message),
+                });
+                if results.len() > max_count {
+                    break;
+                }
+            }
+        } else {
+            let mut iter = self
+                .client
+                .search_all_messages()
+                .query(&query)
+                .limit(max_count + 1);
+            if let Some(offset_id) = offset_id {
+                iter = iter.offset_id(offset_id);
+            }
+            while let Some(message) = iter.next().await? {
+                let native_message = NativeMessage::from_raw(&message);
+                let peer = message.peer().map(|peer| NativePeer::from_raw(&peer));
+                let chat = self
+                    .chats_map
+                    .get(&native_message.chat_id)
+                    .map(|chat| chat.clone());
+                results.push(NativeSearchResult {
+                    kind: NativeSearchResultKind::Message,
+                    chat,
+                    peer: peer.clone(),
+                    seen_chat: peer,
+                    message: Some(native_message),
+                });
+                if results.len() > max_count {
+                    break;
+                }
+            }
+        }
+
+        let has_more = results.len() > max_count;
+        if has_more {
+            results.truncate(max_count);
+        }
+        Ok(NativeSearchPage { results, has_more })
+    }
+
+    pub async fn edit_message(
+        &self,
+        chat_id: i64,
+        message_id: i32,
+        text: String,
+    ) -> Result<NativeMessage> {
+        let peer_ref = self.cached_peer_ref(chat_id)?;
+        self.client.edit_message(peer_ref, message_id, text).await?;
+        let mut messages = self
+            .client
+            .get_messages_by_id(peer_ref, &[message_id])
+            .await?;
+        let message = messages
+            .pop()
+            .and_then(|message| message)
+            .ok_or_else(|| anyhow::anyhow!("Edited message {message_id} was not returned"))?;
+        let native_message = NativeMessage::from_raw(&message);
+        let mut event = NativeEvent::new(NativeEventKind::MessageEdited);
+        event.message = Some(native_message.clone());
+        self.emit_event(event).await;
+        Ok(native_message)
+    }
+
+    pub async fn delete_messages_action(
+        &self,
+        chat_id: i64,
+        message_ids: Vec<i32>,
+    ) -> Result<NativeActionResult> {
+        let peer_ref = self.cached_peer_ref(chat_id)?;
+        self.client.delete_messages(peer_ref, &message_ids).await?;
+        let deleted_messages = NativeDeletedMessages {
+            chat_id: Some(chat_id),
+            message_ids,
+        };
+        let mut event = NativeEvent::new(NativeEventKind::MessagesDeleted);
+        event.deleted_messages = Some(deleted_messages);
+        self.emit_event(event).await;
+        Ok(NativeActionResult::ok("messages deleted"))
+    }
+
+    pub async fn mark_chat_read(&self, chat_id: i64) -> Result<NativeActionResult> {
+        let peer_ref = self.cached_peer_ref(chat_id)?;
+        self.client.mark_as_read(peer_ref).await?;
+        let max_id = self
+            .chats_map
+            .get(&chat_id)
+            .map(|chat| chat.last_message_id)
+            .unwrap_or(0);
+        if let Some(mut chat) = self.chats_map.get_mut(&chat_id) {
+            chat.unread_count = 0;
+            chat.read_inbox_max_id = max_id;
+        }
+        let mut event = NativeEvent::new(NativeEventKind::ReadStateChanged);
+        event.read_state = Some(NativeReadState {
+            chat_id,
+            max_id,
+            unread_count: 0,
+            inbox: true,
+        });
+        self.emit_event(event).await;
+        Ok(NativeActionResult::ok("chat marked read"))
+    }
+
     pub async fn download_media_from_message(
         &self,
         chat_id: i64,
@@ -328,7 +548,7 @@ impl Backend {
 
         let download_dir = get_download_dir(chat_id);
 
-        // 从消息中提取 MIME 类型和文件名
+        // Extract the MIME type and original file name from the message.
         let (mime_type, file_name) = match message.media() {
             Some(Media::Document(doc)) => {
                 let mime = doc.mime_type().map(|s| s.to_string());
@@ -360,13 +580,13 @@ impl Backend {
             file_name.as_deref(),
         );
 
-        // 检查文件是否已存在
+        // Return the cached media path when this file has already been downloaded.
         if std::path::Path::new(&download_path).exists() {
             debug!("Media already downloaded at: {}", download_path);
             return Ok(download_path);
         }
 
-        // 创建目录并下载
+        // Create the download directory before fetching the media payload.
         if !std::path::Path::new(&download_dir).exists() {
             std::fs::create_dir_all(&download_dir)?;
         }
